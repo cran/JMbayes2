@@ -1,0 +1,47 @@
+export(area, cumuplot, coef, compare_jm, crLong, densplot, family, fixef, gelman_diag,
+       ggdensityplot, ggtraceplot, jm, model.frame, model.matrix, ranef, slope,
+       terms, traceplot, tv, value)
+
+import(Rcpp)
+importFrom("utils", "glob2rx", "tail", "head")
+importFrom("stats", "coef", "terms", "model.frame", "model.frame.default",
+           "model.matrix", "model.matrix.default", "family", "lm.fit", "sd",
+           "ar", "var", "vcov", "optim", "delete.response", "model.response",
+           "rnorm", "quantile", "runif", "rlnorm", "cov2cor", "as.formula",
+           "gaussian", ".getXlevels", "makepredictcall")
+importFrom("parallel", "makeCluster", "stopCluster", "detectCores", "parLapply")
+importFrom("nlme", "fixef", "ranef", "pdMatrix")
+importFrom("GLMMadaptive", "effectPlotData")
+importFrom("survival", "coxph", "untangle.specials", "strata")
+importFrom("splines", "splineDesign")
+importFrom("coda", "as.mcmc.list", "as.mcmc", "traceplot", "densplot",
+           "gelman.diag", "cumuplot")
+importFrom("ggplot2", "ggplot", "geom_density", "aes", "ggtitle", "theme_bw",
+           "theme", "element_text", "scale_color_manual", "scale_fill_manual",
+           "guide_legend", "geom_line", "guides")
+importFrom("gridExtra", "marrangeGrob")
+importFrom("matrixStats", "rowQuantiles", "colVars", "colLogSumExps")
+
+
+useDynLib(JMbayes2, .registration = TRUE)
+
+S3method(traceplot, jm)
+S3method(gelman_diag, jm)
+S3method(densplot, jm)
+S3method(cumuplot, jm)
+S3method(ggtraceplot, jm)
+S3method(ggdensityplot, jm)
+S3method(print, jm)
+S3method(summary, jm)
+S3method(print, summary.jm)
+S3method(coef, jm)
+S3method(fixef, jm)
+S3method(ranef, jm)
+S3method(terms, jm)
+S3method(makepredictcall, tv)
+S3method(model.frame, jm)
+S3method(model.matrix, jm)
+S3method(family, jm)
+S3method(effectPlotData, jm)
+S3method(print, compare_jm)
+
