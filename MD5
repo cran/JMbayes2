@@ -1,12 +1,12 @@
-bf8b58ba705fbf86cf3590078672108d *DESCRIPTION
-c2c67560315e36d7c97d35a4c3ceb8b2 *NAMESPACE
-6cf5f051df61f393ccaa122554151b41 *NEWS.md
+7b48325e93608d12ce96eb92a8ee5675 *DESCRIPTION
+909813e41d8404179b1da87ac8bed12a *NAMESPACE
+244035f7b26d67312e8b70f64b07c6fe *NEWS.md
 5505d53b0cbac2ac19e7f0b7a1028359 *R/RcppExports.R
 6efd7bb2e9629eac66d01ce87ddd8c86 *R/basic_methods.R
 9e9bb23f14e641c3cd3d782edce2e585 *R/create_Wlong_mats.R
 7bc06bb7f79f5f0ada964444ec4a3767 *R/help_functions.R
-31b6f738d54e33b6028a9904f16859dc *R/jm.R
-fe451d743f05a1f3ab41a0110be39284 *R/jm_fit.R
+c020f300da0f2401a8b6d7ba1a7153c6 *R/jm.R
+4c8bc1610c214f3881d3c40c6462d093 *R/jm_fit.R
 44f9f292f1f817a13c9368fc59e34060 *README.md
 b45a08564c6d113a6b133f8f8340a5c4 *data/aids.id.rda
 0c91cfcab65d67a057f0901de1b8a9f9 *data/aids.rda
@@ -14,7 +14,7 @@ b45a08564c6d113a6b133f8f8340a5c4 *data/aids.id.rda
 fdcb143258d4bc1d5b5ae502dbdb9a1b *data/pbc2.rda
 16b173d39aa518a526f58f40cccfd5eb *data/prothro.rda
 d5983a9ed02887996c1085a8615ba031 *data/prothros.rda
-bc3f2e12b96f3e5d6ff42489ad4aeb9b *man/JMbayes2.Rd
+a946a9d6df720dac9d484219203f6a43 *man/JMbayes2.Rd
 6b3e3608f33349e64ff8a5c17584e537 *man/aids.Rd
 703eaa8a97d60fb8f797fc961fa08267 *man/coda_methods.Rd
 dfede24719c48d5fdadeb28ecdb600cc *man/crLong.Rd
