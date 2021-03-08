@@ -147,7 +147,7 @@ summary.jm <- function (object, ...) {
     }
     fam_names <- sapply(families, "[[", "family")
     has_sigma_fam <- c("gaussian", "Student-t", "beta", "Gamma",
-                   "negative binomial", "beta binomial")
+                   "negative binomial", "beta binomial", "censored normal")
     has_sigmas <- object$model_data$has_sigmas
     has_sigmas[has_sigmas > 0] <- which(has_sigmas > 0)
     tab_sigmas <- tab_f("sigmas")
@@ -231,11 +231,9 @@ print.summary.jm <- function (x, digits = max(4, getOption("digits") - 4), ...) 
         "\niterations per chain:", x$control$n_iter,
         "\nburn-in per chain:", x$control$n_burnin,
         "\nthinning:", x$control$n_thin,
-        "\ntime:", if (tt > 60)
-            round(tt/60, 1)
-        else round(tt, 1), if (tt > 60)
-            "hours"
-        else "min")
+        "\ntime:", if (tt < 1) {round(tt * 60)} else if (tt > 60)
+            {round(tt/60, 1)} else {round(tt, 1)},
+        if (tt < 1) {"sec"} else if (tt > 60) {"hours"} else {"min"})
     cat("\n")
     invisible(x)
 }

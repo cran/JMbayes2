@@ -40,6 +40,8 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     # and check whether the same data have been used;
     # otherwise an error
     datas <- lapply(Mixed_objects, "[[", "data")
+    datas[] <- lapply(datas, function (d)
+        if (inherits(d, "tbl_df") || inherits(d, "tbl")) as.data.frame(d) else d)
     if (!all(sapply(datas[-1L], function (x) isTRUE(all.equal(x, datas[[1L]]))))) {
         stop("It seems that some of the mixed models have been fitted to different versions ",
              "of the dataset. Use the same exact dataset in the calls to lme() ",
@@ -55,8 +57,6 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     }
     idVar <- id_names[1L]
     idL <- dataL[[idVar]]
-    idL_ind <- lapply(idL, function (x) seq_along(x))
-    idL_ind <- mapply2(function (x, y) split(x, y), idL_ind, idL)
     nY <- length(unique(idL))
     # order data by idL and time_var
     if (is.null(dataL[[time_var]])) {
@@ -99,6 +99,11 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     families <- lapply(Mixed_objects, "[[", "family")
     families[sapply(families, is.null)] <- rep(list(gaussian()),
                                                sum(sapply(families, is.null)))
+
+    # extra parameter in the families
+    extra_parms <- sapply(families,
+                          function (x) if (is.null(x$df)) 0.0 else x$df)
+
     # create the idL per outcome
     # IMPORTANT: some ids may be missing when some subjects have no data for a particular outcome
     # This needs to be taken into account when using idL for indexing. Namely, a new id variable
@@ -127,7 +132,7 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     }
     nres <- sapply(Z, ncol)
     ind_RE <- split(seq_len(sum(nres)), rep(seq_along(Z), nres))
-    componentsHC <- mapply2(create_HC_X3, x = X, z = Z, id = idL,
+    componentsHC <- mapply2(create_HC_X, x = X, z = Z, id = idL,
                             terms = terms_FE, data = mf_FE_dataL)
     x_in_z <- lapply(componentsHC, "[[", "x_in_z")
     x_notin_z <- lapply(componentsHC, "[[", "x_notin_z")
@@ -169,7 +174,8 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     } else {
         dataS <- data_Surv
     }
-
+    if (inherits(dataS, "tbl_df") || inherits(dataS, "tbl"))
+        dataS <- as.data.frame(dataS)
     # if the longitudinal outcomes are not in dataS, we set a random value for
     # them. This is needed for the calculation of the matrix of interaction terms
     # between the longitudinal outcomes and other variables.
@@ -242,10 +248,10 @@ jm <- function (Surv_object, Mixed_objects, time_var,
         Time_start <- unname(Surv_Response[, "start"])
         Time_stop <- unname(Surv_Response[, "stop"])
         delta <-  unname(Surv_Response[, "status"])
-        Time_right <- tapply(Time_stop, idT, tail, n = 1) # time of event
-        trunc_Time <- tapply(Time_start, idT, head, n = 1) # possible left truncation time
+        Time_right <- Time_stop
+        trunc_Time <- Time_start # possible left truncation time
         Time_left <- rep(0.0, nrow(dataS))
-        delta <- tapply(delta, idT, tail, n = 1L) # event indicator at Time_right
+        con$GK_k <- 7L
     } else if (type_censoring == "interval") {
         Time1 <-  unname(Surv_Response[, "time1"])
         Time2 <-  unname(Surv_Response[, "time2"])
@@ -270,10 +276,6 @@ jm <- function (Surv_object, Mixed_objects, time_var,
         rep(1, nrow(mf_surv_dataS))
     } else {
         unclass(mf_surv_dataS[[ind_strata]])
-    }
-    if (type_censoring == "counting") {
-        strata <- tapply(strata, idT, tail, n = 1L)
-        idT <- tapply(idT, idT, tail, n = 1L)
     }
     n_strata <- length(unique(strata))
 
@@ -326,6 +328,14 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     }
 
     # Extract functional forms per longitudinal outcome
+    if (is.language(functional_forms)) {
+        term_labels <- attr(terms(functional_forms), "term.labels")
+        ind_tlabs <- lapply(respVars_form, grep, term_labels, fixed = TRUE)
+        functional_forms <- lapply(ind_tlabs, function (ind, tlabs)
+            if (length(ind)) reformulate(tlabs[ind]), tlabs = term_labels)
+        names(functional_forms) <- respVars_form
+        functional_forms <- functional_forms[!sapply(functional_forms, is.null)]
+    }
     if (any(!names(functional_forms) %in% respVars_form)) {
         stop("unknown names in the list provided in the 'functional_forms' argument; as names ",
              "of the elements of this list you need to use the response variables from ",
@@ -341,6 +351,7 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     }
     functional_forms <- functional_forms[order(match(names(functional_forms),
                                                      respVars_form))]
+    functional_forms <- mapply2(expand_Dexps, functional_forms, respVars_form)
     ###################################################################
     # List of lists
     # One list component per association structure per outcome
@@ -351,7 +362,8 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     FunForms_per_outcome <- lapply(FunForms_per_outcome,
                                    function (x) x[sapply(x, length) > 0])
     collapsed_functional_forms <- lapply(FunForms_per_outcome, names)
-
+    Funs_FunForms <- lapply(functional_forms, extractFuns_FunForms,
+                             data = dataS)
     #####################################################
 
     # design matrices for the survival submodel:
@@ -376,12 +388,17 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     if (!any_gammas) {
         W_H <- matrix(0.0, nrow = nrow(W_H), ncol = 1L)
     }
+    attr <- lapply(functional_forms, extract_attributes, data = dataS_H)
+    eps <- lapply(attr, "[[", 1L)
+    direction <- lapply(attr, "[[", 2L)
     X_H <- design_matrices_functional_forms(st, terms_FE_noResp,
-                                            dataL, time_var, idVar,
-                                            collapsed_functional_forms, Xbar)
+                                            dataL, time_var, idVar, idT,
+                                            collapsed_functional_forms, Xbar,
+                                            eps, direction)
     Z_H <- design_matrices_functional_forms(st, terms_RE,
-                                            dataL, time_var, idVar,
-                                            collapsed_functional_forms)
+                                            dataL, time_var, idVar, idT,
+                                            collapsed_functional_forms, NULL,
+                                            eps, direction)
     U_H <- lapply(functional_forms, construct_Umat, dataS = dataS_H)
     if (length(which_event)) {
         W0_h <- create_W0(Time_right, con$knots, con$Bsplines_degree + 1,
@@ -394,11 +411,13 @@ jm <- function (Surv_object, Mixed_objects, time_var,
             W_h <- matrix(0.0, nrow = nrow(W_h), ncol = 1L)
         }
         X_h <- design_matrices_functional_forms(Time_right, terms_FE_noResp,
-                                                dataL, time_var, idVar,
-                                                collapsed_functional_forms, Xbar)
+                                                dataL, time_var, idVar, idT,
+                                                collapsed_functional_forms, Xbar,
+                                                eps, direction)
         Z_h <- design_matrices_functional_forms(Time_right, terms_RE,
-                                                dataL, time_var, idVar,
-                                                collapsed_functional_forms)
+                                                dataL, time_var, idVar, idT,
+                                                collapsed_functional_forms, NULL,
+                                                eps, direction)
         U_h <- lapply(functional_forms, construct_Umat, dataS = dataS_h)
     } else {
         W0_h <- W_h <- matrix(0.0)
@@ -415,11 +434,13 @@ jm <- function (Surv_object, Mixed_objects, time_var,
             W_H2 <- matrix(0.0, nrow = nrow(W_H2), ncol = 1L)
         }
         X_H2 <- design_matrices_functional_forms(st, terms_FE_noResp,
-                                                 dataL, time_var, idVar,
-                                                 collapsed_functional_forms, Xbar)
+                                                 dataL, time_var, idVar, idT,
+                                                 collapsed_functional_forms, Xbar,
+                                                 eps, direction)
         Z_H2 <- design_matrices_functional_forms(st, terms_RE,
-                                                 dataL, time_var, idVar,
-                                                 collapsed_functional_forms)
+                                                 dataL, time_var, idVar, idT,
+                                                 collapsed_functional_forms, NULL,
+                                                 eps, direction)
         U_H <- lapply(functional_forms, construct_Umat, dataS = dataS_H2)
     } else {
         W0_H2 <- W_H2 <- matrix(0.0)
@@ -433,11 +454,11 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     unq_out_in <- split(unique(out_in), seq_len(nrow(unique(out_in))))
     ind_RE_patt <- lapply(unq_out_in, find_patt, n = nres)
     ind_FE_patt <- lapply(unq_out_in, find_patt, n = nfes_HC)
-    X_dot <- create_X_dot3(nres, nfes_HC, z_in_x, x_in_z, X_HC, nT, unq_idL,
-                           xbas_in_z)
+    X_dot <- create_X_dot(nres, nfes_HC, z_in_x, x_in_z, X_HC, nT, unq_idL,
+                          xbas_in_z)
     ############################################################################
     ############################################################################
-    Data <- list(n = nY, idL = idL, idL_ind = idL_ind, idL_lp = idL_lp, unq_idL = unq_idL,
+    Data <- list(n = nY, idL = idL, idL_lp = idL_lp, unq_idL = unq_idL,
                  y = y, X = X, Z = Z, X_dot = X_dot, Xbar = Xbar,
                  x_in_z = x_in_z, x_notin_z = x_notin_z,
                  has_tilde_betas = has_tilde_betas, ind_FE = ind_FE,
@@ -453,7 +474,7 @@ jm <- function (Surv_object, Mixed_objects, time_var,
                  W0_h = W0_h, W_h = W_h, X_h = X_h, Z_h = Z_h, U_h = U_h,
                  W0_H2 = W0_H2, W_H2 = W_H2, X_H2 = X_H2, Z_H2 = Z_H2, U_H2 = U_H2,
                  log_Pwk = log_Pwk, log_Pwk2 = log_Pwk2,
-                 ind_RE = ind_RE, extra_parms = rep(0.0, length(y)))
+                 ind_RE = ind_RE, extra_parms = extra_parms)
     ############################################################################
     ############################################################################
     # objects to export
@@ -472,7 +493,8 @@ jm <- function (Surv_object, Mixed_objects, time_var,
         FunForms_per_outcome = FunForms_per_outcome,
         collapsed_functional_forms = collapsed_functional_forms,
         FunForms_cpp = lapply(FunForms_per_outcome, unlist),
-        FunForms_ind = FunForms_ind(FunForms_per_outcome)
+        FunForms_ind = FunForms_ind(FunForms_per_outcome),
+        Funs_FunForms = Funs_FunForms
     )
     ############################################################################
     ############################################################################
@@ -517,18 +539,19 @@ jm <- function (Surv_object, Mixed_objects, time_var,
                 mean_betas_nHC = mean_betas_nHC, Tau_betas_nHC = Tau_betas_nHC,
                 mean_bs_gammas = lapply(Tau_bs_gammas, function (x) x[, 1] * 0),
                 Tau_bs_gammas = Tau_bs_gammas,
-                A_tau_bs_gammas = rep(5, n_strata), B_tau_bs_gammas = rep(0.5, n_strata),
+                A_tau_bs_gammas = rep(5, n_strata),
+                B_tau_bs_gammas = rep(0.5, n_strata),
                 rank_Tau_bs_gammas =
                     sapply(lapply(Tau_bs_gammas, qr), "[[", 'rank'),
                 mean_gammas = gammas,
-                Tau_gammas = diag(0.4, length(gammas)),
+                Tau_gammas = diag(1, length(gammas)),
                 penalty_gammas = "none",
                 A_lambda_gammas = 0.5, B_lambda_gammas = 1,
                 A_tau_gammas = 0.5, B_tau_gammas = 1,
                 A_nu_gammas = 0.5, B_nu_gammas = 1,
                 A_xi_gammas = 0.5, B_xi_gammas = 1,
                 mean_alphas = lapply(alphas, "*", 0.0),
-                Tau_alphas = lapply(alphas, function (a) diag(0.4, length(a))),
+                Tau_alphas = lapply(alphas, function (a) diag(1, length(a))),
                 penalty_alphas = "none",
                 A_lambda_alphas = 0.5, B_lambda_alphas = 1.0,
                 A_tau_alphas = 0.5, B_tau_alphas = 1.0,
@@ -583,5 +606,3 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     class(out) <- "jm"
     out
 }
-
-if(getRversion() >= "2.15.1") utils::globalVariables(c(".knots_base_hazard"))

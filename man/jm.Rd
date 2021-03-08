@@ -3,6 +3,16 @@
 \alias{value}
 \alias{slope}
 \alias{area}
+\alias{vexpit}
+\alias{Dexpit}
+\alias{vexp}
+\alias{Dexp}
+\alias{vlog}
+\alias{vlog2}
+\alias{vlog10}
+\alias{vsqrt}
+
+
 \alias{tv}
 
 \title{
@@ -18,8 +28,20 @@ jm(Surv_object, Mixed_objects, time_var, functional_forms = NULL,
   data_Surv = NULL, id_var = NULL, priors = NULL, control = NULL, \dots)
 
 value(x)
-slope(x)
+slope(x, eps = 0.001, direction = "both")
 area(x)
+
+vexpit(x)
+Dexpit(x)
+
+vexp(x)
+Dexp(x)
+
+vlog(x)
+vlog2(x)
+vlog10(x)
+
+vsqrt(x)
 
 tv(x, knots = NULL, ord = 2L)
 }
@@ -106,7 +128,7 @@ tv(x, knots = NULL, ord = 2L)
         \item{\code{Bsplines_degree}}{the degree of the splines in each basis; default quadratic splines.}
         \item{\code{base_hazard_segments}}{the number of segments to split the follow-up period. Defaults to 10.}
         \item{\code{diff}}{the order of the difference used in the penalty matrix for the B-splines for h_0. Defaults to 2.}
-        \item{\code{n_chains}}{an integer specifying the number of chains for the MCMC. Defaults to 1.}
+        \item{\code{n_chains}}{an integer specifying the number of chains for the MCMC. Defaults to 3.}
         \item{\code{n_burnin}}{an integer specifying the number of burn-in iterations. Defaults to 500.}
         \item{\code{n_iter}}{an integer specifying the number of total iterations per chain. Defaults to 3500.}
         \item{\code{seed}}{the seed used in the sampling procedures. Defaults to 123.}
@@ -118,6 +140,9 @@ tv(x, knots = NULL, ord = 2L)
 \item{x}{a numeric input variable.}
 \item{knots}{a numeric vector of knots.}
 \item{ord}{an integer denoting the order of the spline.}
+\item{eps}{numeric scalar denoting the step-size for the finite difference approximation.}
+\item{direction}{character string for the direction of the numerical derivative, options are \code{"both"},
+and \code{"backward"}.}
 \item{\dots}{arguments passed to \code{control}.}
 }
 
@@ -171,7 +196,8 @@ fm1 <- lme(fixed = log(serBilir) ~ year * sex + I(year^2) +
 fCox1 <- coxph(Surv(years, status2) ~ drug + age, data = pbc2.id)
 
 # [3] The basic joint model is fitted using a call to jm() i.e.,
-joint_model_fit_1 <- jm(fCox1, fm1, time_var = "year", n_chains = 1L)
+joint_model_fit_1 <- jm(fCox1, fm1, time_var = "year",
+        n_chains = 1L, n_iter = 11000L, n_burnin = 1000L)
 summary(joint_model_fit_1)
 traceplot(joint_model_fit_1)
 
@@ -201,7 +227,8 @@ Mixed <- list(fm1, fm2, fm3)
 fCox1 <- coxph(Surv(years, status2) ~ drug + age, data = pbc2.id)
 
 # [4] The joint model is fitted using a call to jm() i.e.,
-joint_model_fit_2 <- jm(fCox1, Mixed, time_var = "year", n_chains = 1L)
+joint_model_fit_2 <- jm(fCox1, Mixed, time_var = "year",
+      n_chains = 1L, n_iter = 11000L, n_burnin = 1000L)
 summary(joint_model_fit_2)
 traceplot(joint_model_fit_2)
 
@@ -248,7 +275,8 @@ fForms <- list("log(serBilir)" = ~ value(log(serBilir)) + slope(log(serBilir)),
 # [5] The joint model is fitted using a call to jm() and passing the list
 # to the functional_forms argument.
 joint_model_fit_2 <- jm(fCox1, Mixed, time_var = "year",
-                        functional_forms = fForms, n_chains = 1L)
+                        functional_forms = fForms, n_chains = 1L,
+                        n_iter = 11000L, n_burnin = 1000L)
 summary(joint_model_fit_2)
 
 }

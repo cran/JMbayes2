@@ -19,9 +19,10 @@ void update_b (field<mat> &b, mat &b_mat, field<vec> &eta,
                const field<mat> &X_H, const field<mat> &X_h, const field<mat> &X_H2,
                const field<mat> &Z_H, const field<mat> &Z_h, const field<mat> &Z_H2,
                const field<mat> &U_H, const field<mat> &U_h, const field<mat> &U_H2,
-               const mat &Wlong_bar, const field<vec> &betas, const vec &alphas,
-               const uvec &id_H_, const uvec &id_h,
+               const mat &Wlong_bar, const mat &Wlong_sds, const field<vec> &betas,
+               const vec &alphas, const uvec &id_H_, const uvec &id_h,
                const field<uvec> &FunForms, const field<uvec> &FunForms_ind,
+               const List Funs_FunForms,
                const field<mat> &X, const field<mat> &Z,
                const field<uvec> &idL, const field<mat> &y,  const vec &sigmas,
                const vec &extra_parms, const CharacterVector &families,
@@ -34,7 +35,7 @@ void update_b (field<mat> &b, mat &b_mat, field<vec> &eta,
                const uvec &indFast_H, const uvec &indFast_h, const uvec &which_event,
                const uvec &which_right_event, const uvec &which_left,
                const uvec &which_interval, const bool &any_event,
-               const bool &any_interval, const uword &n_strata,
+               const bool &any_interval, const umat &ni_event,
                const mat &L, const vec &sds,
                const uword &it, mat &acceptance_b, cube &res_b, const bool &save_random_effects,
                const uword &n_burnin, const uword &GK_k, mat &cumsum_b, cube &outprod_b) {
@@ -54,24 +55,24 @@ void update_b (field<mat> &b, mat &b_mat, field<vec> &eta,
     // calculate Wlong_H, Wlong_h and Wlong_H2 based on the proposed_b
     // and calculate Wlong * alphas
     mat Wlong_H_proposed =
-      calculate_Wlong(X_H, Z_H, U_H, Wlong_bar, betas, proposed_b, id_H_, FunForms,
-                      FunForms_ind);
+      calculate_Wlong(X_H, Z_H, U_H, Wlong_bar, Wlong_sds, betas, proposed_b,
+                      id_H_, FunForms, FunForms_ind, Funs_FunForms);
     vec WlongH_alphas_proposed = Wlong_H_proposed * alphas;
 
     mat Wlong_h_proposed(Wlong_h.n_rows, Wlong_h.n_cols);
     vec Wlongh_alphas_proposed(Wlongh_alphas.n_rows);
     if (any_event) {
       Wlong_h_proposed =
-        calculate_Wlong(X_h, Z_h, U_h, Wlong_bar, betas, proposed_b, id_h, FunForms,
-                        FunForms_ind);
+        calculate_Wlong(X_h, Z_h, U_h, Wlong_bar, Wlong_sds, betas, proposed_b,
+                        id_h, FunForms, FunForms_ind, Funs_FunForms);
       Wlongh_alphas_proposed = Wlong_h_proposed * alphas;
     }
     mat Wlong_H2_proposed(Wlong_H2.n_rows, Wlong_H2.n_cols);
     vec WlongH2_alphas_proposed(WlongH2_alphas.n_rows);
     if (any_interval) {
       Wlong_H2_proposed =
-        calculate_Wlong(X_H2, Z_H2, U_H2, Wlong_bar, betas, proposed_b, id_H_,
-                        FunForms, FunForms_ind);
+        calculate_Wlong(X_H2, Z_H2, U_H2, Wlong_bar, Wlong_sds, betas,
+                        proposed_b, id_H_, FunForms, FunForms_ind, Funs_FunForms);
       WlongH2_alphas_proposed = Wlong_H2_proposed * alphas;
     }
     // calculate logLik_Surv_proposed
@@ -103,14 +104,14 @@ void update_b (field<mat> &b, mat &b_mat, field<vec> &eta,
         logLik_long.at(i) = logLik_long_proposed.at(i);
         logLik_surv.at(i) = logLik_surv_proposed.at(i);
         logLik_re.at(i) = logLik_re_proposed.at(i);
-        uword first_H = i * GK_k * n_strata;
-        uword last_H = (i + 1) * GK_k * n_strata - 1;
+        uword first_H = GK_k * ni_event.at(i, 0);
+        uword last_H = GK_k * ni_event.at(i, 1) - 1;
         Wlong_H.rows(first_H, last_H) = Wlong_H_proposed.rows(first_H, last_H);
         WlongH_alphas.rows(first_H, last_H) =
           WlongH_alphas_proposed.rows(first_H, last_H);
         if (any_event) {
-          uword fitst_h = i * n_strata;
-          uword last_h = (i + 1) * n_strata - 1;
+          uword fitst_h = ni_event.at(i, 0);
+          uword last_h = ni_event.at(i, 1) - 1;
           Wlong_h.rows(fitst_h, last_h) = Wlong_h_proposed.rows(fitst_h, last_h);
           Wlongh_alphas.rows(fitst_h, last_h) =
             Wlongh_alphas_proposed.rows(fitst_h, last_h);

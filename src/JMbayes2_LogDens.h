@@ -17,7 +17,7 @@ vec log_long_i (const mat &y_i, const vec &eta_i, const double &sigma_i,
   vec mu_i = mu_fun(eta_i, link_i);
   if (fam_i == "gaussian") {
     log_contr = log_dnorm(y_i, mu_i, sigma_i);
-  } else if (fam_i == "Student-t") {
+  } else if (fam_i == "Student's-t") {
     log_contr = log_dt((y_i - mu_i) / sigma_i, extr_prm_i) - std::log(sigma_i);
   } else if (fam_i == "beta") {
     log_contr = log_dbeta(y_i, mu_i * sigma_i, sigma_i * (1.0 - mu_i));
@@ -166,9 +166,10 @@ vec logLik_jm_stripped (
     const field<mat> &X_H, const field<mat> &X_h, const field<mat> &X_H2,
     const field<mat> &Z_H, const field<mat> &Z_h, const field<mat> &Z_H2,
     const field<mat> &U_H, const field<mat> &U_h, const field<mat> &U_H2,
-    const mat &Wlong_bar,
+    const mat &Wlong_bar, const mat &Wlong_sds,
     const bool &any_event, const bool &any_interval, const bool &any_gammas,
     const field<uvec> &FunForms, const field<uvec> &FunForms_ind,
+    const List &Funs_FunForms,
     const uvec &id_H_, const uvec &id_h,
     const vec &log_Pwk, const vec &log_Pwk2,
     const uvec &id_H_fast, const uvec &id_h_fast,
@@ -207,23 +208,23 @@ vec logLik_jm_stripped (
     WH2_gammas = WH2_gammas * gammas;
   }
   mat Wlong_H =
-    calculate_Wlong(X_H, Z_H, U_H, Wlong_bar, betas_, b, id_H_, FunForms,
-                    FunForms_ind);
+    calculate_Wlong(X_H, Z_H, U_H, Wlong_bar, Wlong_sds, betas_, b, id_H_,
+                    FunForms, FunForms_ind, Funs_FunForms);
   vec WlongH_alphas = Wlong_H * alphas;
   mat Wlong_h(W0_h.n_rows, alphas.n_rows);
   vec Wlongh_alphas(W0_h.n_rows);
   if (any_event) {
     Wlong_h =
-      calculate_Wlong(X_h, Z_h, U_h, Wlong_bar, betas_, b, id_h,
-                      FunForms, FunForms_ind);
+      calculate_Wlong(X_h, Z_h, U_h, Wlong_bar, Wlong_sds, betas_, b, id_h,
+                      FunForms, FunForms_ind, Funs_FunForms);
     Wlongh_alphas = Wlong_h * alphas;
   }
   mat Wlong_H2(W0_H2.n_rows, alphas.n_rows);
   vec WlongH2_alphas(W0_H2.n_rows);
   if (any_interval) {
     Wlong_H2 =
-      calculate_Wlong(X_H2, Z_H2, U_H2, Wlong_bar, betas_, b, id_H_,
-                      FunForms, FunForms_ind);
+      calculate_Wlong(X_H2, Z_H2, U_H2, Wlong_bar, Wlong_sds, betas_, b, id_H_,
+                      FunForms, FunForms_ind, Funs_FunForms);
     WlongH2_alphas = Wlong_H2 * alphas;
   }
   vec logLik_surv =

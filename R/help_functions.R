@@ -142,15 +142,16 @@ extract_functional_forms <- function (Form, data) {
     sapply(c("value", "slope", "area"), grep, x = colnames(M), fixed = TRUE)
 }
 
-construct_Umat <- function (fForms, dataS) {
-    tt <- terms(fForms)
-    m <- model.matrix(tt, model.frame(tt, data = dataS))
-    cnams <- colnames(m)
-    ind_value <- grep("value(", cnams, fixed = TRUE)
-    ind_slope <- grep("slope(", cnams, fixed = TRUE)
-    ind_area <- grep("area(", cnams, fixed = TRUE)
-    ind <- unique(c(ind_value, ind_slope, ind_area))
-    m[, cnams %in% cnams[ind], drop = FALSE]
+expand_Dexps <- function (Form, respVar) {
+    tlabs <- attr(terms(Form), "term.labels")
+    dexps_ind <- grep("Dexp", tlabs)
+    dexps <- tlabs[dexps_ind]
+    dexps <- gsub("slope", "value", dexps)
+    p1 <- paste0(respVar, "))")
+    p2 <- paste0(respVar, ")):slope(", respVar, ")")
+    dexps <- gsub(p1, p2, dexps, fixed = TRUE)
+    tlabs[dexps_ind] <- dexps
+    reformulate(tlabs)
 }
 
 LongData_HazardModel <- function (time_points, data, times, ids, timeVar) {
@@ -243,8 +244,16 @@ locf <- function (object, fromLast = FALSE, maxgap = Inf) {
     object
 }
 
+extract_attributes <- function (form, data) {
+    mf <- model.frame(terms(form), data = data)
+    eps <- lapply(mf, function (v, name) attr(v, name), name = "eps")
+    direction <- lapply(mf, function (v, name) attr(v, name), name = "direction")
+    list(eps = eps[!sapply(eps, is.null)],
+         direction = direction[!sapply(direction, is.null)])
+}
+
 design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
-                                              Fun_Forms, Xbar = NULL) {
+                                              idT, Fun_Forms, Xbar = NULL) {
     data[] <- lapply(data, function (x) locf(locf(x), fromLast = TRUE))
     desgn_matr <- function (time, terms, Xbar) {
         D <- LongData_HazardModel(time, data, data[[timeVar]],
@@ -256,15 +265,8 @@ design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
         X
     }
     degn_matr_slp <- function (time, terms, Xbar) {
-        if (is.list(time)) {
-            t1 <- lapply(time, function (t) t + 0.001)
-            t2 <- lapply(time, function (t) t - 0.001)
-            M1 <- desgn_matr(t1, terms, Xbar)
-            M2 <- desgn_matr(t2, terms, Xbar)
-        } else {
-            M1 <- desgn_matr(time + 0.001, terms, Xbar)
-            M2 <- desgn_matr(time - 0.001, terms, Xbar)
-        }
+        M1 <- desgn_matr(time + 0.001, terms, Xbar)
+        M2 <- desgn_matr(time - 0.001, terms, Xbar)
         mapply2(function (x1, x2) (x1 - x2) / 0.002, M1, M2)
     }
     degn_matr_area <- function (time, terms, Xbar) {
@@ -278,7 +280,8 @@ design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
         quadrature_points <- function (x) {
             P <- unname(x / 2)
             sk <- outer(P, sk + 1)
-            # we divide with x to obtain the standardized area
+            # we divide with x to obtain the area up to time t, divided by t
+            # to account for the length of the interval
             list(P = c(t(outer(P / x, wk))), sk = sk)
         }
         qp <- lapply(time, quadrature_points)
@@ -300,6 +303,85 @@ design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
     out <- lapply(seq_along(Fun_Forms), function (i) lapply(out[Fun_Forms[[i]]], "[[", i))
     names(out) <- names(Fun_Forms)
     out
+}
+
+design_matrices_functional_forms <-
+    function (time, terms, data, timeVar, idVar, idT, Fun_Forms, Xbar = NULL,
+              eps, direction) {
+        data[] <- lapply(data, function (x) locf(locf(x), fromLast = TRUE))
+        desgn_matr <- function (time, terms, Xbar) {
+            D <- LongData_HazardModel(time, data, data[[timeVar]],
+                                      data[[idVar]], idT, timeVar)
+            mf <- lapply(terms, model.frame.default, data = D)
+            X <- mapply2(model.matrix.default, terms, mf)
+            if (!is.null(Xbar))
+                X <- mapply2(function (m, mu) m - rep(mu, each = nrow(m)), X, Xbar)
+            X
+        }
+        degn_matr_slp <- function (time, terms, Xbar, eps, direction) {
+            K <- length(terms)
+            out <- vector("list", K)
+            for (i in seq_len(K)) {
+                direction_i <- if (length(direction[[i]])) direction[[i]][[1L]] else "both"
+                eps_i <- if (length(eps[[i]])) eps[[i]][[1L]] else 0.001
+                if (direction_i == "both") {
+                    t1 <- time + eps_i
+                    t2 <- pmax(time - eps_i, 0)
+                } else {
+                    t1 <- time
+                    t2 <- pmax(time - eps_i, 0)
+                }
+                terms_i <- terms[[i]]
+                D1 <- LongData_HazardModel(t1, data, data[[timeVar]],
+                                           data[[idVar]], idT, timeVar)
+                mf1 <- model.frame.default(terms_i, data = D1)
+                X1 <- model.matrix.default(terms_i, mf1)
+                D2 <- LongData_HazardModel(t2, data, data[[timeVar]],
+                                           data[[idVar]], idT, timeVar)
+                mf2 <- model.frame.default(terms_i, data = D2)
+                X2 <- model.matrix.default(terms_i, mf2)
+                if (!is.null(Xbar)) {
+                    X1 <- X1 - rep(Xbar[[i]], each = nrow(X1))
+                    X2 <- X2 - rep(Xbar[[i]], each = nrow(X2))
+                }
+                out[[i]] <- (X1 - X2) / c(t1 - t2)
+            }
+            out
+        }
+        degn_matr_area <- function (time, terms, Xbar) {
+            if (!is.list(time)) {
+                time <- if (is.matrix(time)) split(time, row(time))
+                else split(time, seq_along(time))
+            }
+            GK <- gaussKronrod(15L)
+            wk <- GK$wk
+            sk <- GK$sk
+            quadrature_points <- function (x) {
+                P <- unname(x / 2)
+                sk <- outer(P, sk + 1)
+                # we divide with x to obtain the area up to time t, divided by t
+                # to account for the length of the interval
+                list(P = c(t(outer(P / x, wk))), sk = sk)
+            }
+            qp <- lapply(time, quadrature_points)
+            ss <- lapply(qp, function (x) c(t(x[['sk']])))
+            Pwk <- unlist(lapply(qp, '[[', 'P'), use.names = FALSE)
+            M <- desgn_matr(ss, terms, Xbar)
+            M <- lapply(M, "*", Pwk)
+            sum_qp <- function (m) {
+                n <- nrow(m)
+                grp <- rep(seq_len(round(n / 15)), each = 15L)
+                rowsum(m, grp, reorder = FALSE)
+            }
+            lapply(M, sum_qp)
+        }
+        ################
+        out <- list("value" = desgn_matr(time, terms, Xbar),
+                    "slope" = degn_matr_slp(time, terms, Xbar, eps, direction),
+                    "area" = degn_matr_area(time, terms, Xbar))
+        out <- lapply(seq_along(Fun_Forms), function (i) lapply(out[Fun_Forms[[i]]], "[[", i))
+        names(out) <- names(Fun_Forms)
+        out
 }
 
 extract_D <- function (object) {
@@ -367,79 +449,20 @@ extract_log_sigmas <- function (object) {
     out
 }
 
-value <- slope <- area <- function (x) rep(1, length(x))
-
-create_HC_X <- function (TermsX, TermsZ, x, z, id, mfHC) {
-    # function that creates the hierarchical centering version of the
-    # design matrix for the fixed effects
-    find_positions <- function (nams1, nams2) {
-        nams1 <- gsub("^", "\\^", nams1, fixed = TRUE)
-        vals <- c(glob2rx(nams1), glob2rx(paste0(nams1, ":*")),
-                  glob2rx(paste0("*:", nams1)))
-        out <- sort(unique(unlist(lapply(vals, grep, x = nams2))))
-        out
-    }
-    check_td <- function (x, id) {
-        !all(sapply(split(x, id), function (z) all(z - z[1L] < .Machine$double.eps^0.5)))
-    }
-    grep2 <- function (x, nams) grep(x, nams, fixed = TRUE)
-    terms.labs_X <- attr(TermsX, "term.labels")
-    terms.labs_Z <- attr(TermsZ, "term.labels")
-    # check for time-varying covariates
-    timeTerms <- if (length(terms.labs_Z)) {
-        unlist(lapply(terms.labs_Z, grep2, nams = colnames(x)))
-    }
-    which_td <- unname(which(apply(x, 2, check_td, id = id)))
-    all_TDterms <- unique(c(timeTerms, which_td))
-    baseline <- if (length(all_TDterms)) seq_len(ncol(x))[-all_TDterms] else seq_len(ncol(x))
-    ind_colmns <- c(list(baseline), lapply(colnames(z)[-1L], find_positions,
-                                           nams2 = colnames(x)))
-    ind_colmns2 <- seq_len(ncol(x))
-    ind_colmns2 <- ind_colmns2[!ind_colmns2 %in% unlist(ind_colmns)]
-    mfHC <- mfHC[!duplicated(id), ]
-    Xhc <- if (length(terms.labs_Z)) {
-        which.timevar <- unique(unlist(lapply(terms.labs_Z, grep2, nams = names(mfHC))))
-        mfHC[which.timevar] <- lapply(mfHC[which.timevar],
-                                      function (x) { x[] <- 1; x })
-        model.matrix(TermsX, mfHC)
-    } else {
-        model.matrix(TermsX, mfHC)
-    }
-    index <- numeric(ncol(Xhc))
-    for (i in seq_along(ind_colmns)) {
-        index[ind_colmns[[i]]] <- i
-    }
-    list(Xhc = Xhc, columns_HC = index, columns_nHC = ind_colmns2)
+value <- area <- function (x) rep(1, NROW(x))
+vexpit <- Dexpit <- vexp <- Dexp <- function (x) rep(1, NROW(x))
+vsqrt <- vlog <- vlog2 <- vlog10 <- function (x) rep(1, NROW(x))
+slope <- function (x, eps = 0.001, direction = "both") {
+    out <- rep(1, NROW(x))
+    temp <- list(eps = eps, direction = direction)
+    attributes(out) <- c(attributes(out), temp)
+    out
 }
 
-create_HC_X2 <- function (x, z, id) {
+create_HC_X <- function(x, z, id, terms_FE, data, center = FALSE) {
     check_tv <- function (x, id) {
         !all(sapply(split(x, id),
-                    function (z) all(z - z[1L] < .Machine$double.eps^0.5)))
-    }
-
-    cnams_x <- colnames(x)
-    cnams_z <- colnames(z)
-    if (!"(Intercept)" %in% cnams_x || !"(Intercept)" %in% cnams_z) {
-        stop("cannot perform hierarchical centering in the absense of an ",
-             "intercept term in both the fixed and random effects design ",
-             "matrices.")
-    }
-
-    x_in_z <- which(cnams_x %in% cnams_z)
-    x_notin_z <- which(!cnams_x %in% cnams_z)
-    baseline <- x_notin_z[!apply(x[, x_notin_z, drop = FALSE], 2L, check_tv, id= id)]
-    x_notin_z <- setdiff(x_notin_z, baseline)
-    if (!length(baseline)) baseline <- as.integer(NA)
-    if (!length(x_notin_z)) x_notin_z <- as.integer(NA)
-    list(baseline = baseline, x_in_z = x_in_z, x_notin_z = x_notin_z,
-         Xbase = x[!duplicated(id), baseline, drop = FALSE])
-}
-
-create_HC_X3 <- function(x, z, id, terms_FE, data, center = FALSE) {
-    check_tv <- function (x, id) {
-        !all(sapply(split(x, id),
-                    function (z) all(z - z[1L] < .Machine$double.eps^0.5)))
+                    function (z) all(abs(z - z[1L]) < .Machine$double.eps^0.5)))
     }
     x <- scale(x, center = center, scale = FALSE)
     cnams_x <- colnames(x)
@@ -486,62 +509,7 @@ create_HC_X3 <- function(x, z, id, terms_FE, data, center = FALSE) {
          xbas_in_z = mat_HC[, x_in_z_base, drop = FALSE] > 1)
 }
 
-create_X_dot <- function(Xbase, nT, unq_idL, nres, nfes_HC, baseline, x_in_z_base, x_in_z) {
-
-    n_outcomes <- length(nres) # number of outcomes
-    n_res <- sum(nres) # total number of RE
-
-    rows <- split(seq_len(n_res), rep(seq_along(nres), nres)) # all rows (id= 1)
-
-    base_rows <- sapply(rows, head, 1) # rows for baseline (id= 1)
-    base_cols <- mapply(function(xzb, b){ which(xzb %in% b)}, x_in_z_base, baseline) # cols for baseline
-
-    RE_rows <- sapply(x_in_z, seq_along) # rows for RE (id= 1)
-    RE_cols <- x_in_z # cols for RE
-
-    M <- matrix(0, nrow= n_res*nT, ncol= sum(nfes_HC))
-
-    for (j in seq_len(n_outcomes)) {
-
-        ids <- unq_idL[[j]] # ids present in outcome-j
-        ids_rows <- (ids-1) * n_res # 1st row for each id
-
-        M[base_rows[j] + ids_rows, sum(nfes_HC[1:j-1]) + base_cols[[j]]] <- Xbase[[j]] # add baseline
-
-        rows <- sum(nres[1:j-1]) + RE_rows[[j]] + rep(ids_rows, each= length(RE_rows[[j]]))
-        cols <- rep(sum(nfes_HC[1:j-1]) + RE_cols[[j]], times= length(ids))
-        M[cbind(rows, cols)] <- 1 # add 1 for each RE present in the FE
-    }
-    M
-}
-
-create_X_dot2 <- function (nT, nres, ind_FE_HC, x_in_z, x_in_z_base, unq_idL,
-                           Xbase) {
-    n_outcomes <- length (nres)
-    ind_rows_subject <- rep(seq_len(nT), each = sum(nres))
-    ind_rows_outcome <- rep(seq_len(n_outcomes), nres)
-    ind_cols <- split(seq_along(ind_FE_HC),
-                      rep(seq_len(n_outcomes), sapply(x_in_z_base, length)))
-
-    M <- matrix(0.0, sum(nT * nres), length(ind_FE_HC))
-    for (i in seq_len(nT)) {
-        for (j in seq_len(n_outcomes)) {
-            check <- i %in% unq_idL[[j]]
-            if (check) {
-                rows <- which(ind_rows_subject == i)[ind_rows_outcome == j]
-                cols <- ind_cols[[j]][x_in_z[[j]]]
-                M[cbind(rows[1:length(cols)], cols)] <- 1
-                if (length(ind_cols[[j]]) > length(cols)) {
-                    M[rows[1L], ind_cols[[j]][-x_in_z[[j]]]] <-
-                        Xbase[[j]][as.character(i), ]
-                }
-            }
-        }
-    }
-    M
-}
-
-create_X_dot3 <- function(nres, nfes_HC, z_in_x, x_in_z, X_HC, nT, unq_idL, xbas_in_z) {
+create_X_dot <- function(nres, nfes_HC, z_in_x, x_in_z, X_HC, nT, unq_idL, xbas_in_z) {
     n_outcomes <- length(nres) # number of outcomes
     n_res <- sum(nres) # total number of RE
     M <- matrix(0, nrow = n_res * nT, ncol = sum(nfes_HC))
@@ -658,6 +626,7 @@ init_vals_surv <- function(Data, model_info, data, betas, b, control) {
     functional_forms <- model_info$functional_forms
     FunForms_per_outcome <- model_info$FunForms_per_outcome
     collapsed_functional_forms <- model_info$collapsed_functional_forms
+    Funs_FunsForms <- model_info$Funs_FunsForms
     ###
     Xbar <- Data$Xbar
     X_H <- Data$X_H; Z_H <- Data$Z_H; U_H <- Data$U_H; W0_H <- Data$W0_H; W_H <- Data$W_H
@@ -696,7 +665,8 @@ init_vals_surv <- function(Data, model_info, data, betas, b, control) {
     eta_init[] <- mapply2(function (eta, ind) {
         if (length(ind) > length(eta)) eta[ind, , drop = FALSE] else eta
     }, eta_init, ind_multipl_events)
-    Wlong_init <- create_Wlong(eta_init, FunForms_per_outcome, U_init)
+    Wlong_init <- create_Wlong(eta_init, FunForms_per_outcome, U_init,
+                               Funs_FunsForms)
     Wlong_init <- do.call("cbind", Wlong_init)
     ######################################################################################
     ######################################################################################
@@ -741,17 +711,17 @@ init_vals_surv <- function(Data, model_info, data, betas, b, control) {
     ######################################################################################
     id_H <- rep(list(rep(unclass(Data$idT), each = control$GK_k)), length(X_H))
     eta_H <- linpred_surv(X_H, betas, Z_H, b, id_H)
-    Wlong_H <- create_Wlong(eta_H, FunForms_per_outcome, U_H)
+    Wlong_H <- create_Wlong(eta_H, FunForms_per_outcome, U_H, Funs_FunsForms)
     if (length(which_event)) {
         id_h <- rep(list(unclass(Data$idT)), length(X_h))
         eta_h <- linpred_surv(X_h, betas, Z_h, b, id_h)
-        Wlong_h <- create_Wlong(eta_h, FunForms_per_outcome, U_h)
+        Wlong_h <- create_Wlong(eta_h, FunForms_per_outcome, U_h, Funs_FunsForms)
     } else {
         Wlong_h <- rep(list(matrix(0.0, length(Time_right), 1)), length(W_H))
     }
     if (length(which_interval)) {
         eta_H2 <- linpred_surv(X_H2, betas, Z_H, b, id_H)
-        Wlong_H2 <- create_Wlong(eta_H2, FunForms_per_outcome, U_H2)
+        Wlong_H2 <- create_Wlong(eta_H2, FunForms_per_outcome, U_H2, Funs_FunsForms)
     } else {
         Wlong_H2 <- rep(list(matrix(0.0, length(Time_right), 1)), length(W_H))
     }
@@ -837,35 +807,67 @@ FunForms_ind <- function (FunForms) {
     lapply(FunForms, f)
 }
 
-create_Wlong <- function (eta, functional_forms, U) {
+extractFuns_FunForms <- function (Form, data) {
+    tr <- terms(Form)
+    mF <- model.frame(tr, data = data)
+    M <- model.matrix(tr, mF)
+    cnams <- colnames(M)
+    possible_forms <- c("value(", "slope(", "area(")
+    ind <- unlist(lapply(possible_forms, grep, x = cnams, fixed = TRUE))
+    M <- M[1, cnams %in% cnams[unique(ind)], drop = FALSE]
+    FForms <- sapply(c("value", "slope", "area"), grep, x = colnames(M),
+                     fixed = TRUE)
+    FForms <- FForms[sapply(FForms, length) > 0]
+    get_fun <- function (FForm, nam) {
+        cnams <- colnames(M)[FForm]
+        out <- rep("identity", length(cnams))
+        f <- function (fun_nam) {
+            grep(paste0(fun_nam, "(", nam), cnams, fixed = TRUE)
+        }
+        out[f("expit")] <- "expit"
+        out[f("dexpit")] <- "dexpit"
+        out[f("exp")] <- "exp"
+        out[f("dexp")] <- "dexp"
+        out[f("log")] <- "log"
+        out[f("log2")] <- "log2"
+        out[f("log10")] <- "log10"
+        out[f("sqrt")] <- "sqrt"
+        out[f("square")] <- "square"
+        out[1L] # <- to change: if the same term different functions
+    }
+    mapply(get_fun, FForms, names(FForms))
+}
+
+transf_eta <- function (eta, fun_nams) {
+    for (j in seq_along(fun_nams)) {
+        if (fun_nams[j] == "expit") {
+            eta[, j] <- plogis(eta[, j])
+        } else if (fun_nams[j] == "dexpit") {
+            eta[, j] <- plogis(eta[, j]) * plogis(eta[, j], lower.tail = FALSE)
+        } else if (fun_nams[j] == "exp") {
+            eta[, j] <- exp(eta[, j])
+        } else if (fun_nams[j] == "log") {
+            eta[, j] <- log(eta[, j])
+        } else if (fun_nams[j] == "sqrt") {
+            eta[, j] <- sqrt(eta[, j])
+        } else if (fun_nams[j] == "square") {
+            eta[, j] <- eta[, j] * eta[, j]
+        }
+    }
+    eta
+}
+
+create_Wlong <- function (eta, functional_forms, U, Funs_FunsForms) {
     Wlong <- vector("list", length(eta))
     for (i in seq_along(functional_forms)) {
         FF_i <- functional_forms[[i]]
-        eta_i <- eta[[i]]
+        eta_i <- transf_eta(eta[[i]], Funs_FunsForms[[i]])
         U_i <- U[[i]]
         Wlong_i <- matrix(1.0, nrow(eta_i), max(unlist(FF_i)))
         for (j in seq_along(FF_i)) {
             ind <- FF_i[[j]]
             Wlong_i[, ind] <- Wlong_i[, ind] * eta_i[, j]
         }
-        Wlong[[i]] <- U_i * Wlong_i
-    }
-    Wlong
-}
-
-create_Wlong2 <- function (eta, FunForms, U, ind) {
-    Wlong <- vector("list", length(eta))
-    for (i in seq_along(FunForms)) {
-        FF_i <- FunForms[[i]]
-        eta_i <- eta[[i]]
-        U_i <- U[[i]]
-        ind_i <- ind[[i]]
-        Wlong_i <- matrix(1.0, nrow(eta_i), max(unlist(FF_i)))
-        for (j in unique(ind_i)) {
-            kk <- FF_i[ind_i == j]
-            Wlong_i[, kk] <- Wlong_i[, kk] * eta_i[, j]
-        }
-
         Wlong[[i]] <- U_i * Wlong_i
     }
     Wlong
@@ -955,8 +957,14 @@ get_statistic <- function (s, stat) {
     }
 }
 
-center_fun <- function (M, means) {
-    if (!all(M == 0)) as.matrix(M - rep(means, each = nrow(M))) else M
+center_fun <- function (M, means, sds = NULL) {
+    if (!all(M == 0)) {
+        if (is.null(sds)) {
+            scale(x = M, center = means, scale = FALSE)
+        } else {
+            scale(x = M, center = means, scale = sds)
+        }
+    } else M
 }
 
 docall_cbind <- function (l) {
@@ -1040,9 +1048,6 @@ ggcolthemes <- list(
 )
 
 tv <- function (x, knots = NULL, ord = 2L) {
-    if (is.null(knots)) {
-        knots <- .knots_base_hazard
-    }
     out <- splines::splineDesign(knots, x, ord = ord, outer.ok = TRUE)
     attr(out, "knots") <- knots
     attr(out, "ord") <- ord
@@ -1074,6 +1079,7 @@ create_W0 <- function (times, knots, ord, strata) {
 }
 
 construct_Umat <- function (fForms, dataS) {
+    #expit <- exp <- log <- log2 <- log10 <- sqrt <- function (x) rep(1, NROW(x))
     tt <- terms(fForms)
     m <- model.matrix(tt, model.frame(tt, data = dataS))
     cnams <- colnames(m)
@@ -1229,4 +1235,236 @@ jitter2 <- function (x, factor = 2) {
     }
 }
 
+SurvData_HazardModel <- function (time_points, data, times, ids, time_var) {
+    unq_ids <- unique(ids)
+    fids <- factor(ids, levels = unq_ids)
+    if (!is.matrix(time_points)) {
+        time_points <- as.matrix(time_points)
+    }
+    tt <- split(time_points, row(time_points))
+    spl_times <- split(times, fids)[unclass(fids)]
+    rownams_id <- split(row.names(data), fids)[unclass(fids)]
+    ind <- mapply2(findInterval, tt, spl_times)
+    ind[] <- lapply(ind, function (x) {x[x < 1] <- 1; x})
+    ind <- mapply2(`[`, rownams_id, ind)
+    data <- data[unlist(ind, use.names = FALSE), ]
+    data[[time_var]] <- c(t(time_points))
+    row.names(data) <- seq_len(nrow(data))
+    data
+}
+
+LongData_HazardModel <- function (time_points, data, times, ids, idT, time_var) {
+    unq_ids <- unique(ids)
+    fids <- factor(ids, levels = unq_ids)
+    idT. <- match(idT, unique(idT))
+    tt <- if (is.list(time_points)) {
+        time_points
+    } else {
+        if (!is.matrix(time_points)) {
+            time_points <- as.matrix(time_points)
+        }
+        split(time_points, row(time_points))
+    }
+    spl_times <- split(times, fids)
+    rownams_id <- split(row.names(data), fids)
+    if (length(spl_times) < length(tt)) {
+        spl_times <- spl_times[idT.]
+        rownams_id <- rownams_id[idT.]
+    }
+    ind <- mapply2(findInterval, tt, spl_times)
+    ind[] <- lapply(ind, function (x) {x[x < 1] <- 1; x})
+    ind <- mapply2(`[`, rownams_id, ind)
+    data <- data[unlist(ind, use.names = FALSE), ]
+    data[[time_var]] <- if (is.matrix(time_points)) {
+        c(t(time_points))
+    } else {
+        unlist(time_points, use.names = FALSE)
+    }
+    row.names(data) <- seq_len(nrow(data))
+    data
+}
+
+ms_setup <- function (data, timevars, statusvars, transitionmat, id, covs = NULL) {
+    # setup times matrix with NAs
+    # First row is NA as this is starting state 
+    timesmat <- matrix(NA, nrow(data), length(timevars))
+    timecols_data <- which(colnames(data) %in% timevars[!is.na(timevars)])
+    timesmat[, -which(is.na(timevars))] <- as.matrix(data[, timecols_data]) 
+    # setup status matrix with NAs
+    # First row is NA as this is starting state 
+    statusmat <- matrix(NA, nrow(data), length(statusvars))
+    statuscols_data <- which(colnames(data) %in% statusvars[!is.na(statusvars)])
+    statusmat[, -which(is.na(statusvars))] <- as.matrix(data[, statuscols_data]) 
+    # ensure convert to matrices
+    timesmat <- as.matrix(timesmat)
+    statusmat <- as.matrix(statusmat)
+    # check dimesnions are the same
+    if (any(dim(timesmat) != dim(statusmat))) 
+        stop("Dimensions of \"time\" and \"status\" data should be equal")
+    # components
+    # number of unique subjects
+    n_subj <- nrow(timesmat)
+    # number of states
+    n_states <- dim(transitionmat)[1]
+    # set start state to 1 and start time to 0 for all subjects
+    # ATTENTION: this needs to be adjusted to more flexible to allow subjects starting at different states
+    # this could be achieved by a requesting a separate argument (vector with starting state)
+    starting_state <- rep(1, n_subj)
+    starting_time <- rep(0, n_subj)
+    idnam <- id
+    id <- data[[id]]
+    order_id <- order(id)
+    out <- ms_prepdat(timesmat = timesmat, statusmat = statusmat, id = id, 
+                   starting_time = starting_time, starting_state = starting_state, 
+                   transitionmat = transitionmat, 
+                   original_states = (1:nrow(transitionmat)), longmat = NULL)
+    out <- as.data.frame(out)
+    names(out) <- c(idnam, "from_state", "to_state", "transition", 
+                    "Tstart", "Tstop", "status")
+    out$time <- out$Tstop - out$Tstart
+    out <- out[, c(1:6, 8, 7)]
+    ord <- order(out[, 1], out[, 5], out[, 2], out[, 3])
+    out <- out[ord, ]
+    row.names(out) <- 1:nrow(out)
+    # Covariates
+    if (!is.null(covs)) {
+        n_covs <- length(covs)
+        cov_cols <- match(covs, names(data))
+        cov_names <- covs
+        covs <- data[, cov_cols]
+        if (!is.factor(out[, 1])) 
+            out[, 1] <- factor(out[, 1])
+        n_per_subject <- tapply(out[, 1], out[, 1], length)
+        if (n_covs > 1) 
+            covs <- covs[order_id, , drop = FALSE]
+        if (n_covs == 1) {
+            longcovs <- rep(covs, n_per_subject)
+            longcovs <- longcovs[ord]
+            longcovs <- as.data.frame(longcovs)
+            names(longcovs) <- cov_names
+        } else {
+            longcovs <- lapply(1:n_covs, function(i) rep(covs[, i], n_per_subject))
+            longcovs <- as.data.frame(longcovs)
+            names(longcovs) <- cov_names
+        }
+        out <- cbind(out, longcovs)
+    }
+    # add attributes maybe
+    # add specific class maybe
+    # need to add functionality for covariates (e.g. like keep in mstate)
+    return(out)
+} 
+
+ms_prepdat <- function (timesmat, statusmat, id, starting_time, starting_state, transitionmat, 
+                        original_states, longmat) {
+    if (is.null(nrow(timesmat))) 
+        return(longmat)
+    if (nrow(timesmat) == 0) 
+        return(longmat)
+    from_states <- apply(!is.na(transitionmat), 2, sum)
+    to_states <- apply(!is.na(transitionmat), 1, sum)
+    absorbing_states <- which(to_states == 0)
+    starts <- which(from_states == 0)
+    new_states <- starting_state
+    new_times <- starting_time
+    rmv <- NULL
+    for (i in 1:starts) {
+        subjects <- which(starting_state == starts)
+        n_start <- length(subjects)
+        to_states_2 <- which(!is.na(transitionmat[starts, ]))
+        trans_states <- transitionmat[starts, to_states_2]
+        n_trans_states <- length(to_states_2)
+        if (all(n_start > 0, n_trans_states > 0)) {
+            Tstart <- starting_time[subjects]
+            Tstop <- timesmat[subjects, to_states_2, drop = FALSE]
+            Tstop[Tstop <= Tstart] <- Inf
+            state_status <- statusmat[subjects, to_states_2, drop = FALSE]
+            mintime <- apply(Tstop, 1, min)
+            hlp <- Tstop * 1 / state_status
+            hlp[Tstop == 0 & state_status == 0] <- Inf
+            next_time <- apply(hlp, 1, min)
+            censored <- which(is.infinite(apply(hlp, 1, min)))
+            wh <- which(mintime < next_time)
+            whminc <- setdiff(wh, censored)
+            if (length(whminc) > 0) {
+                whsubjs <- id[subjects[whminc]]
+                whsubjs <- paste(whsubjs, collapse = " ")
+                warning("Subjects ", whsubjs, " Have smaller transition time with status = 0, larger transition time with status = 1, 
+                from starting state ", original_states[starts])
+            }
+            next_time[censored] <- mintime[censored]
+            if (ncol(hlp) > 1) {
+                hlpsrt <- t(apply(hlp, 1, sort))
+                warn1 <- which(hlpsrt[, 1] - hlpsrt[, 2] == 0)
+                if (length(warn1) > 0) {
+                    isw <- id[subjects[warn1]]
+                    isw <- paste(isw, collapse = " ")
+                    hsw <- hlpsrt[warn1, 1]
+                    hsw <- paste(hsw, collapse = " ")
+                    warning("simultaneous transitions possible for subjects ", isw, " at times ", hsw, 
+                            " -> Smallest receiving state will be used")
+                }
+            }
+            if (length(censored) > 0) {
+                next_state <- apply(hlp[-censored, , drop = FALSE], 
+                                    1, which.min)
+                absorbed <- (1:n_start)[-censored][which(to_states_2[next_state] %in% absorbing_states)]
+            } else {
+                next_state <- apply(hlp, 1, which.min)
+                absorbed <- (1:n_start)[which(to_states_2[next_state] %in% absorbing_states)]
+            }
+            states_matrix <- matrix(0, n_start, n_trans_states)
+            if (length(censored) > 0) {
+                states_matrix_min <- states_matrix[-censored, , drop = FALSE]
+            } else {
+                states_matrix_min <- states_matrix
+            }
+            if (nrow(states_matrix_min) > 0) 
+                states_matrix_min <- t(sapply(1:nrow(states_matrix_min), function(i) {
+                    x <- states_matrix_min[i, ]
+                    x[next_state[i]] <- 1
+                    return(x)
+                }))
+            if (length(censored) > 0) {
+                states_matrix[-censored, ] <- states_matrix_min
+            } else {
+                states_matrix <- states_matrix_min
+            }
+            mm <- matrix(c(rep(id[subjects], rep(n_trans_states, n_start)), 
+                           rep(original_states[starts], n_trans_states * n_start), 
+                           rep(original_states[to_states_2], n_start), 
+                           rep(trans_states, n_start), rep(Tstart, rep(n_trans_states, n_start)), 
+                           rep(next_time, rep(n_trans_states, n_start)), as.vector(t(states_matrix))), 
+                         n_trans_states * n_start, 7)
+            longmat <- rbind(longmat, mm)
+            rmv <- c(rmv, subjects[c(censored, absorbed)])
+            if (length(censored) > 0) {
+                new_states[subjects[-censored]] <- to_states_2[next_state]
+            } else {
+                new_states[subjects] <- to_states_2[next_state]
+            }
+            if (length(censored) > 0)  {
+                new_times[subjects[-censored]] <- next_time[-censored]
+            } else {
+                new_times[subjects] <- next_time
+            }
+        }
+    }
+    if (length(rmv) > 0) {
+        timesmat <- timesmat[-rmv, ]
+        statusmat <- statusmat[-rmv, ]
+        new_times <- new_times[-rmv]
+        new_states <- new_states[-rmv]
+        id <- id[-rmv]
+    }
+    n_states <- nrow(transitionmat)
+    idx <- rep(1, n_states)
+    idx[starts] <- 0
+    idx <- cumsum(idx)
+    new_states <- idx[new_states]
+    Recall(timesmat = timesmat[, -starts], statusmat = statusmat[, -starts], 
+           id = id, starting_time = new_times, starting_state = new_states, 
+           transitionmat = transitionmat[-starts, -starts], original_states = original_states[-starts], 
+           longmat = longmat)
+}
 
