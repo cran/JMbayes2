@@ -1,4 +1,4 @@
-jm <- function (Surv_object, Mixed_objects, time_var,
+jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                 functional_forms = NULL, data_Surv = NULL, id_var = NULL,
                 priors = NULL, control = NULL, ...) {
     call <- match.call()
@@ -67,7 +67,7 @@ jm <- function (Surv_object, Mixed_objects, time_var,
 
     # extract terms from mixed models
     terms_FE <- lapply(Mixed_objects, extract_terms, which = "fixed", data = dataL)
-    respVars <- sapply(terms_FE, function (tt) all.vars(tt)[1L])
+    respVars <- lapply(terms_FE, function (tt) all.vars(attr(tt, "variables")[[2L]]))
     respVars_form <- sapply(terms_FE, function (tt) as.character(attr(tt, "variables"))[2L])
     terms_FE_noResp <- lapply(terms_FE, delete.response)
     terms_RE <- lapply(Mixed_objects, extract_terms, which = "random", data = dataL)
@@ -81,10 +81,8 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     # for some outcomes)
     NAs_FE_dataL <- lapply(mf_FE_dataL, attr, "na.action")
     NAs_RE_dataL <- lapply(mf_RE_dataL, attr, "na.action")
-    mf_FE_dataL <- mapply(fix_NAs_fixed, mf_FE_dataL, NAs_FE_dataL, NAs_RE_dataL,
-                          SIMPLIFY = FALSE)
-    mf_RE_dataL <- mapply(fix_NAs_random, mf_RE_dataL, NAs_RE_dataL, NAs_FE_dataL,
-                          SIMPLIFY = FALSE)
+    mf_FE_dataL <- mapply2(fix_NAs_fixed, mf_FE_dataL, NAs_FE_dataL, NAs_RE_dataL)
+    mf_RE_dataL <- mapply2(fix_NAs_random, mf_RE_dataL, NAs_RE_dataL, NAs_FE_dataL)
 
     # create response vectors
     y <- lapply(mf_FE_dataL, model.response)
@@ -109,8 +107,8 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     # This needs to be taken into account when using idL for indexing. Namely, a new id variable
     # will need to be created in jm_fit()
     unq_id <- unique(idL)
-    idL <- mapply(exclude_NAs, NAs_FE_dataL, NAs_RE_dataL,
-                  MoreArgs = list(id = idL), SIMPLIFY = FALSE)
+    idL <- mapply2(exclude_NAs, NAs_FE_dataL, NAs_RE_dataL,
+                   MoreArgs = list(id = idL))
     idL <- lapply(idL, match, table = unq_id)
     # the index variable idL_lp is to be used to subset the random effects of each outcome
     # such that to calculate the Zb part of the model as rowSums(Z * b[idL_lp, ]). This
@@ -123,9 +121,9 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     unq_idL <- lapply(idL, unique)
 
     # create design matrices for mixed models
-    X <- mapply(model.matrix.default, terms_FE, mf_FE_dataL, SIMPLIFY = FALSE)
+    X <- mapply2(model.matrix.default, terms_FE, mf_FE_dataL)
     Xbar <- lapply(X, colMeans)
-    Z <- mapply(model.matrix.default, terms_RE, mf_RE_dataL, SIMPLIFY = FALSE)
+    Z <- mapply2(model.matrix.default, terms_RE, mf_RE_dataL)
     if (length(Z) == 1 && ncol(Z[[1]]) == 1) {
         stop("jm() does not currently work when you have a single ",
              "longitudinal outcome and only random intercepts.")
@@ -180,7 +178,11 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     # them. This is needed for the calculation of the matrix of interaction terms
     # between the longitudinal outcomes and other variables.
     for (i in seq_along(respVars)) {
-        if (is.null(dataS[[respVars[i]]])) dataS[[respVars[i]]] <- rnorm(nrow(dataS))
+        nl <- length(respVars[[i]])
+        for (j in seq_len(nl)) {
+            if (is.null(dataS[[respVars[[i]][j]]]))
+                dataS[[respVars[[i]][j]]] <- rnorm(nrow(dataS), 20)
+        }
     }
     # if the time_var is not in dataS set it to a random number
     if (is.null(dataS[[time_var]])) dataS[[time_var]] <- rnorm(nrow(dataS))
@@ -188,7 +190,10 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     terms_Surv <- Surv_object$terms
     terms_Surv_noResp <- delete.response(terms_Surv)
     mf_surv_dataS <- model.frame.default(terms_Surv, data = dataS)
-
+    # var names
+    av <- all.vars(attr(terms_Surv, "variables")[[2L]])
+    Time_var <- head(av, -1L)
+    event_var <- tail(av, 1L)
     # survival times
     Surv_Response <- model.response(mf_surv_dataS)
     type_censoring <- attr(Surv_Response, "type")
@@ -275,9 +280,21 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     strata <- if (is.null(ind_strata)) {
         rep(1, nrow(mf_surv_dataS))
     } else {
-        unclass(mf_surv_dataS[[ind_strata]])
+        strt <- mf_surv_dataS[[ind_strata]]
+        if (!is.factor(strt)) {
+            stop("the strata variable in the Cox model is not a factor. ",
+                 "Please set it as a factor in the database,\n\tand ",
+                 "refit the stratified Cox model.")
+        }
+        unclass(strt)
     }
     n_strata <- length(unique(strata))
+
+    # check if we have competing risks or multi-state processes. In this case,
+    # we will have multiple strata per subject. NOTE: this will also be the
+    # case for recurrent events. We will need to change the definition of
+    # CR_MS to account for this
+    CR_MS <- any(tapply(strata, idT, function (x) length(unique(x))) > 1)
 
     # 'Time_integration' is the upper limit of the integral in likelihood
     # of the survival model. For subjects with event (delta = 1), for subjects with
@@ -322,9 +339,10 @@ jm <- function (Surv_object, Mixed_objects, time_var,
 
     # knots for the log baseline hazard function
     if (is.null(con$knots)) {
-        qs <- quantile(Time_right, probs = c(0.0, 1.0))
-        con$knots <- knots(qs[1L], qs[2L], con$base_hazard_segments,
-                           con$Bsplines_degree)
+        qs <- lapply(split(Time_right, strata), range)
+        con$knots <- lapply(qs, function (x)
+            knots(x[1L], x[2L], con$base_hazard_segments,
+                  con$Bsplines_degree))
     }
 
     # Extract functional forms per longitudinal outcome
@@ -379,7 +397,12 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     # 'Time_right', we put "_H" to denote calculation at the 'Time_integration', and
     # "_H2" to denote calculation at the 'Time_integration2'.
     strata_H <- rep(strata, each = con$GK_k)
-    W0_H <- create_W0(c(t(st)), con$knots, con$Bsplines_degree + 1, strata_H)
+    W0_H <- if (recurrent) {
+        create_W0(c(t(st - trunc_Time)), con$knots, con$Bsplines_degree + 1,
+                  strata_H)
+    } else {
+        create_W0(c(t(st)), con$knots, con$Bsplines_degree + 1, strata_H)
+    }
     dataS_H <- SurvData_HazardModel(st, dataS, Time_start,
                                     paste0(idT, "_", strata), time_var)
     mf <- model.frame.default(terms_Surv_noResp, data = dataS_H)
@@ -401,8 +424,12 @@ jm <- function (Surv_object, Mixed_objects, time_var,
                                             eps, direction)
     U_H <- lapply(functional_forms, construct_Umat, dataS = dataS_H)
     if (length(which_event)) {
-        W0_h <- create_W0(Time_right, con$knots, con$Bsplines_degree + 1,
-                          strata)
+        W0_h <- if (recurrent) {
+            create_W0(Time_right - trunc_Time, con$knots,
+                      con$Bsplines_degree + 1, strata)
+        } else {
+            create_W0(Time_right, con$knots, con$Bsplines_degree + 1, strata)
+        }
         dataS_h <- SurvData_HazardModel(Time_right, dataS, Time_start,
                                         paste0(idT, "_", strata), time_var)
         mf <- model.frame.default(terms_Surv_noResp, data = dataS_h)
@@ -486,15 +513,16 @@ jm <- function (Surv_object, Mixed_objects, time_var,
         frames = list(mf_FE = mf_FE_dataL, mf_RE = mf_RE_dataL,
                       mf_Surv = mf_surv_dataS),
         var_names = list(respVars = respVars, respVars_form = respVars_form,
-                         idVar = idVar, time_var = time_var),
+                         idVar = idVar, time_var = time_var,
+                         Time_var = Time_var, event_var = event_var),
         families = families,
-        type_censoring = type_censoring,
+        type_censoring = type_censoring, CR_MS = CR_MS,
         functional_forms = functional_forms,
         FunForms_per_outcome = FunForms_per_outcome,
         collapsed_functional_forms = collapsed_functional_forms,
         FunForms_cpp = lapply(FunForms_per_outcome, unlist),
         FunForms_ind = FunForms_ind(FunForms_per_outcome),
-        Funs_FunForms = Funs_FunForms
+        Funs_FunForms = Funs_FunForms, eps = eps, direction = direction
     )
     ############################################################################
     ############################################################################
@@ -509,6 +537,7 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     bs_gammas <- rep(-0.1, ncol(W0_H))
     gammas <- if (inherits(Surv_object, "coxph")) coef(Surv_object) else
         -coef(Surv_object) / Surv_object$scale
+    if (is.null(gammas)) gammas <- 0.0
     alphas <- rep(0.0, sum(sapply(U_H, ncol)))
     initial_values <- list(betas = betas, log_sigmas = log_sigmas, D = D,
                            b = b, bs_gammas = bs_gammas, gammas = gammas,
@@ -567,8 +596,8 @@ jm <- function (Surv_object, Mixed_objects, time_var,
     if (is.null(priors) || !is.list(priors)) {
         priors <- prs
     } else {
-        ind <- names(prs) %in% names(priors)
-        prs[ind] <- priors
+        ind <- intersect(names(priors), names(prs))
+        prs[ind] <- priors[ind]
         priors <- prs
     }
     if (!priors$penalty_gammas %in% c("none", "ridge", "horseshoe")) {

@@ -162,7 +162,7 @@ jm_fit <- function (model_data, model_info, initial_values, priors, control) {
             if (length(d <- dim(kk)) > 2) {
                 m <- matrix(0.0, d[3L], d[1L] * d[2L])
                 for (j in seq_len(d[3L])) m[j, ] <- c(kk[, , j])
-                as.mcmc(m[, , keep_its, drop = FALSE])
+                as.mcmc(m[keep_its, , drop = FALSE])
             } else as.mcmc(kk[keep_its, , drop = FALSE])
         }))
     }
@@ -227,7 +227,17 @@ jm_fit <- function (model_data, model_info, initial_values, priors, control) {
         }
         statistics[] <- lapply(statistics, fix_b)
         nRE <- ncol(statistics$Mean$b)
-        b <- do.call("rbind", out$mcmc[["b"]])
+        b <- do.call("rbind", mcmc_out$mcmc[["b"]])
+        jstart <- 1
+        jstop <- length(keep_its)
+        for (i in seq_len(control$n_chains)) {
+          mcmc_out$mcmc[["b"]][[i]] <- array(0.0, dim = c(length(dnames_b[[1]]), nRE, length(keep_its)))
+          for (j in jstart:jstop) {
+            mcmc_out$mcmc[["b"]][[i]][, , j - ((i - 1) * length(keep_its))] <- b[j, ]
+          } 
+          jstart <- jstart + length(keep_its)
+          jstop <- jstop + length(keep_its)
+        }
         nn <- nrow(statistics$Mean[["b"]])
         post_vars <- array(0.0, c(nRE, nRE, nn))
         for (i in seq_len(nn)) {
@@ -252,6 +262,7 @@ jm_fit <- function (model_data, model_info, initial_values, priors, control) {
         statistics$Mean$b <- mcmc_out$postmeans_b
         statistics$post_vars <- mcmc_out$postvars_b
         mcmc_out <- mcmc_out[!names(mcmc_out) %in% c('postmeans_b', 'postvars_b')]
+        mcmc_out[['mcmc']][['b']] <- lapply(out, function (x) x$mcmc$b_last)
     }
     # Fit statistics
     thetas <- statistics$Mean
@@ -294,5 +305,9 @@ jm_fit <- function (model_data, model_info, initial_values, priors, control) {
     mcmc_out$logLik <- mcmc_out$mlogLik <- NULL
     c(mcmc_out, list(statistics = statistics,
                      fit_stats = list(conditional = conditional_fit_stats,
-                                      marginal = marginal_fit_stats)))
+                                      marginal = marginal_fit_stats)),
+      list(Wlong_bar = model_data$Wlong_bar,
+           Wlong_sds = model_data$Wlong_sds, Wlong_std = model_data$Wlong_std,
+           W_bar = model_data$W_bar, W_sds = model_data$W_sds,
+           W_std = model_data$W_std))
 }

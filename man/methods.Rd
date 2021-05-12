@@ -60,6 +60,7 @@ family(object, \dots)
 
 compare_jm(\dots, type = c("marginal", "conditional"),
   order = c("WAIC", "DIC", "LPML", "none"))
+
 }
 
 \arguments{
@@ -70,7 +71,7 @@ than the total number of submodels, extracts from all of them.}
 \item{process}{which submodel(s) to extract the terms: \cr
 \itemize{
     \item if \code{"longitudinal"}, the linear mixed model(s), or
-    \item if \code{"survival"}, the survival model.
+    \item if \code{"event"}, the survival model.
 }
 }
 \item{type}{in \code{terms()} and \code{model.frame()}, which effects to select in the longitudinal process: \cr
