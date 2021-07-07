@@ -139,7 +139,8 @@ extract_functional_forms <- function (Form, data) {
     possible_forms <- c("value(", "slope(", "area(")
     ind <- unlist(lapply(possible_forms, grep, x = cnams, fixed = TRUE))
     M <- M[, cnams %in% cnams[unique(ind)], drop = FALSE]
-    sapply(c("value", "slope", "area"), grep, x = colnames(M), fixed = TRUE)
+    sapply(c("value", "slope", "area"), grep, x = colnames(M), fixed = TRUE,
+           simplify = FALSE)
 }
 
 expand_Dexps <- function (Form, respVar) {
@@ -408,12 +409,11 @@ slope <- function (x, eps = 0.001, direction = "both") {
     out
 }
 
-create_HC_X <- function(x, z, id, terms_FE, data, center = FALSE) {
+create_HC_X <- function(x, z, id, terms, data) {
     check_tv <- function (x, id) {
         !all(sapply(split(x, id),
                     function (z) all(abs(z - z[1L]) < .Machine$double.eps^0.5)))
     }
-    x <- scale(x, center = center, scale = FALSE)
     cnams_x <- colnames(x)
     cnams_z <- colnames(z)
     n_res <- ncol(z)
@@ -428,18 +428,22 @@ create_HC_X <- function(x, z, id, terms_FE, data, center = FALSE) {
         baseline <- x_notin_z[ind]
         X_HC[[1]] <- x[!duplicated(id), baseline, drop = FALSE]
         mat_HC[cbind(1, baseline)] <- 2 # baseline
-        }
+    }
     # remaining RE
     if (n_res > 1) {
         for (i in seq_len(n_res)[-1]) {
-            xint_in_z <- union(grep(paste0(cnams_z[i], ":"), cnams_x, fixed= TRUE),
-                               grep(paste0(":", cnams_z[i]), cnams_x, fixed= TRUE)) # interactions can be found as RE:var1, var1:RE, or var1:RE:var2
+            # interactions can be found as RE:var1, var1:RE, or var1:RE:var2
+            xint_in_z <- union(grep(paste0(cnams_z[i], ":"), cnams_x,
+                                    fixed = TRUE),
+                               grep(paste0(":", cnams_z[i]), cnams_x,
+                                    fixed = TRUE))
+            xint_in_z <- sort(xint_in_z)
             if (!length(xint_in_z)) next
             data_temp <- data
-            col_name <- colnames(data)[sapply(colnames(data), grepl, cnams_z[i], fixed= TRUE)]
+            col_name <- colnames(data)[sapply(colnames(data), grepl, cnams_z[i],
+                                              fixed = TRUE)]
             data_temp[, col_name][] <- 1
-            x_temp <- scale(model.matrix.default(terms_FE, data = data_temp),
-                            center = center, scale = FALSE)
+            x_temp <- model.matrix.default(terms, data = data_temp)
             ind <- !apply(x_temp[, xint_in_z, drop = FALSE], 2L, check_tv,
                           id = id)
             if(any(ind)) {
@@ -465,11 +469,14 @@ create_X_dot <- function(nres, nfes_HC, z_in_x, x_in_z, X_HC, nT, unq_idL, xbas_
     for (j in seq_len(n_outcomes)) { # j-th outcome
         ids <- unq_idL[[j]] # ids present in outcome-j
         ids_rows <- (ids-1) * n_res # 1st row for each id
-        rows <- sum(nres[1:j-1]) + z_in_x[[j]] + rep(ids_rows, each= length(z_in_x[[j]]))
-        cols <- rep(sum(nfes_HC[1:j-1]) + x_in_z[[j]], times= length(ids))
-        M[cbind(rows, cols)] <- 1 # add 1 for each z_in_x
+        rows1 <- sum(nres[1:j-1]) + z_in_x[[j]] + rep(ids_rows,
+                                                      each = length(z_in_x[[j]]))
+        cols1 <- sum(nfes_HC[1:j-1]) + match(names(x_in_z[[j]]),
+                                             colnames(xbas_in_z[[j]]))
+        cols1 <- rep(cols1, times = length(ids))
+        M[cbind(rows1, cols1)] <- 1 # add 1 for each z_in_x
         bas_cols <- xbas_in_z[[j]]
-        for (k in z_in_x[[j]]) { # k-th RE in z_in_x # improve: remove this loop here
+        for (k in seq_len(nres[j])) { # k-th RE
             if (!sum(bas_cols[k, ])) next
             M[sum(nres[1:j-1]) + k + ids_rows, sum(nfes_HC[1:j-1]) +
                   which(bas_cols[k, ])] <- X_HC[[j]][[k]]
@@ -561,7 +568,7 @@ extractFuns_FunForms <- function (Form, data) {
     ind <- unlist(lapply(possible_forms, grep, x = cnams, fixed = TRUE))
     M <- M[1, cnams %in% cnams[unique(ind)], drop = FALSE]
     FForms <- sapply(c("value", "slope", "area"), grep, x = colnames(M),
-                     fixed = TRUE)
+                     fixed = TRUE, simplify = FALSE)
     FForms <- FForms[sapply(FForms, length) > 0]
     get_fun <- function (FForm, nam) {
         cnams <- colnames(M)[FForm]
@@ -1220,24 +1227,24 @@ ms_prepdat <- function (timesmat, statusmat, id, starting_time, starting_state, 
 }
 
 extract_mcmc_as_inits <- function(x_mcmc, i, nams_x, nams_special, ind_RE, dim_D, has_sigmas) {
-    c(lapply(x_mcmc[!nams_x %in% nams_special], function(x, i) x[[i]][nrow(x[[i]]), , drop = TRUE], i = i), 
+    c(lapply(x_mcmc[!nams_x %in% nams_special], function(x, i) x[[i]][nrow(x[[i]]), , drop = TRUE], i = i),
       'log_sigmas' = unname(lapply(x_mcmc[nams_x %in% 'sigmas'], function(x, i, has_sigmas) ifelse(has_sigmas, log(x[[i]][nrow(x[[i]]), , drop = TRUE]), -20), i = i, has_sigmas = has_sigmas)),
-      list(betas = unname(lapply(x_mcmc[nams_x[grep('betas', nams_x)]], function(x, i) x[[i]][nrow(x[[i]]), , drop = TRUE], i = i))), 
-      list(b = mapply(function(x, y, i) x[[i]][,y , dim(x[[i]])[length(dim(x[[i]]))], drop = TRUE], 
-                      x_mcmc[nams_x %in% 'b'], ind_RE, 
-                      i = i, SIMPLIFY = FALSE, USE.NAMES = FALSE)), 
+      list(betas = unname(lapply(x_mcmc[nams_x[grep('betas', nams_x)]], function(x, i) x[[i]][nrow(x[[i]]), , drop = TRUE], i = i))),
+      list(b = mapply(function(x, y, i) x[[i]][,y , dim(x[[i]])[length(dim(x[[i]]))], drop = TRUE],
+                      x_mcmc[nams_x %in% 'b'], ind_RE,
+                      i = i, SIMPLIFY = FALSE, USE.NAMES = FALSE)),
       lapply(x_mcmc[nams_x %in% 'D'], function(x, i, dim_D) {
           D <- matrix(NA, ncol = dim_D, nrow = dim_D)
           D_vec <- x[[i]][nrow(x[[i]]), , drop = TRUE]
           D[upper.tri(D, diag = TRUE)] <- D_vec[order(names(D_vec))]
           D[lower.tri(D, diag = FALSE)] <- D[upper.tri(D, diag = FALSE)]
           D
-      }, 
+      },
       i = i, dim_D = dim_D)
     )
 }
 
-extract_last_iterations <- function(x) {
+extract_last_iterations <- function (x) {
     x_mcmc <- x$mcmc
     n_chains <- x$control$n_chains
     nams_x <- names(x_mcmc)
@@ -1247,10 +1254,28 @@ extract_last_iterations <- function(x) {
     last_iter_x <- vector('list', n_chains)
     has_sigmas <- as.integer(x$initial_values$log_sigmas > -20)
     for (i in 1:n_chains) {
-        last_iter_x[[i]] <- extract_mcmc_as_inits(x_mcmc, i = i, nams_x = nams_x, 
-                                                  nams_special = nams_special, ind_RE = ind_RE, dim_D, 
-                                                  has_sigmas = has_sigmas)
+        last_iter_x[[i]] <-
+            extract_mcmc_as_inits(x_mcmc, i = i, nams_x = nams_x,
+                                  nams_special = nams_special, ind_RE = ind_RE,
+                                  dim_D, has_sigmas = has_sigmas)
     }
     last_iter_x
 }
+
+create_sigma_list <- function (sigmas, ss_sigmas, idL) {
+    n <- length(sigmas)
+    out <- vector("list", n)
+    for (i in 1:n) {
+        sigmas_i <- sigmas[[i]]
+        id_i <- idL[[i]]
+        if (ss_sigmas[i]) {
+            out[[i]] <- sigmas_i[id_i]
+        } else {
+            out[[i]] <- rep(sigmas_i, length(id_i))
+        }
+    }
+    out
+}
+
+lng_unq <- function (x) length(unique(x))
 

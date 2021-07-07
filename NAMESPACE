@@ -1,7 +1,8 @@
-export(area, cumuplot, coef, compare_jm, crLong, densplot, family, fixef, gelman_diag,
+export(area, calibration_metrics, calibration_plot, cumuplot, coef, compare_jm,
+       crLong, densplot, family, fixef, gelman_diag,
        ggdensityplot, ggtraceplot, jm, model.frame, model.matrix, ranef, slope,
-       terms, traceplot, tv, tvAUC, tvROC, value, vexpit, Dexpit, vexp, Dexp, vlog, vlog2,
-       vlog10, vsqrt)
+       terms, traceplot, tv, tvAUC, tvBrier, tvROC, value, vexpit, Dexpit, vexp,
+       Dexp, vlog, vlog2, vlog10, vsqrt)
 
 import(Rcpp)
 importFrom("utils", "glob2rx", "tail", "head", "combn")
@@ -10,12 +11,12 @@ importFrom("stats", "coef", "terms", "model.frame", "model.frame.default",
            "ar", "var", "vcov", "optim", "delete.response", "model.response",
            "rnorm", "quantile", "runif", "rlnorm", "cov2cor", "as.formula",
            "gaussian", ".getXlevels", "makepredictcall", "plogis",
-           "reformulate", "predict", "pnorm", "ave", "median")
+           "reformulate", "predict", "pnorm", "ave", "median", "density")
 importFrom("parallel", "makeCluster", "stopCluster", "detectCores", "parLapply",
            "clusterSetRNGStream")
 importFrom("nlme", "fixef", "ranef", "pdMatrix")
 importFrom("GLMMadaptive", "effectPlotData")
-importFrom("survival", "coxph", "untangle.specials", "strata")
+importFrom("survival", "coxph", "untangle.specials", "strata", "survfit")
 importFrom("splines", "splineDesign")
 importFrom("coda", "as.mcmc.list", "as.mcmc", "traceplot", "densplot",
            "gelman.diag", "cumuplot")
@@ -26,7 +27,7 @@ importFrom("gridExtra", "marrangeGrob")
 importFrom("matrixStats", "rowQuantiles", "colVars", "colLogSumExps",
            "colCumsums")
 importFrom("graphics", "abline", "axis", "box", "lines", "mtext", "par",
-           "polygon", "title", "plot")
+           "polygon", "title", "plot", "points")
 
 useDynLib(JMbayes2, .registration = TRUE)
 
@@ -56,6 +57,7 @@ S3method(print, tvAUC)
 S3method(tvROC, jm)
 S3method(print, tvROC)
 S3method(plot, tvROC)
+S3method(print, tvBrier)
 S3method(predict, jm)
 
 

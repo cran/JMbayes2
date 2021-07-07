@@ -201,6 +201,7 @@ mat docall_cbindF (const field<mat> &Mats) {
 
 uvec create_fast_ind (const uvec &group) {
   uword l = group.n_rows;
+  if (l == 1) return group - 1;
   uvec ind = find(group.rows(1, l - 1) != group.rows(0, l - 2));
   uword k = ind.n_rows;
   ind.insert_rows(k, 1);
@@ -728,6 +729,39 @@ mat chol_update(const mat &U, // If U = chol(M), returns chol(M.submat(keep, kee
     rem = rem - 1;
   }
   return Res;
+}
+
+uword n_field (const field<vec> &x) {
+  uword n = x.n_rows;
+  uword out = 0;
+  for (uword i = 0; i < n; ++i)
+    out += x.at(i).n_rows;
+  return out;
+}
+
+field<vec> create_sigmas_field (const field<vec> &sigmas,
+                                const uvec &ss_sigmas,
+                                const field<uvec> &idL) {
+  uword n = sigmas.size();
+  field<vec> out(n);
+  for (uword i = 0; i < n; ++i) {
+    vec sigmas_i = sigmas.at(i);
+    uvec id_i = idL.at(i);
+    if (ss_sigmas.at(i)) {
+      out.at(i) = sigmas_i.rows(id_i);
+    } else {
+      vec xx(id_i.n_rows);
+      xx.fill(as_scalar(sigmas_i));
+      out.at(i) = xx;
+    }
+  }
+  return out;
+}
+
+vec scalar2vec (const double &x) {
+  vec v(1);
+  v.fill(x);
+  return v;
 }
 
 #endif

@@ -114,9 +114,10 @@ print.tvROC <- function (x, digits = 4, ...) {
                     "qSN" = x$qSN, "qSP" = x$qSP, check.names = FALSE,
                     check.rows = FALSE)
     xx <- rep("", nrow(d))
-    xx[x$thr == x$Youden] <- "*"
+    xx[which.min(abs(x$thr - x$Youden))] <- "*"
     d[[" "]] <- xx
     d <- d[!is.na(d$qSN) & !is.na(d$qSP), ]
+    d <- d[!duplicated(d[c("SN", "SP")]), ]
     row.names(d) <- 1:nrow(d)
     print(d)
     cat("\n")
@@ -124,8 +125,9 @@ print.tvROC <- function (x, digits = 4, ...) {
 }
 
 plot.tvROC <- function (x, legend = FALSE,
-                        optimal_cutoff = c("", "F1score", "Youden"), ...) {
-    plot(x$FP, x$TP, type = "l", xlab = "1 - Specificity", ylab = "Sensitivity")
+                        optimal_cutoff = c("", "F1score", "Youden"),
+                        xlab = "1 - Specificity", ylab = "Sensitivity", ...) {
+    plot(x$FP, x$TP, type = "l", xlab = xlab, ylab = ylab, ...)
     abline(a = 0, b = 1, lty = 3)
     optimal_cutoff <- match.arg(optimal_cutoff)
     if (optimal_cutoff == "F1score")
@@ -312,3 +314,209 @@ print.tvAUC <- function (x, digits = 4, ...) {
     invisible(x)
 }
 
+calibration_plot <- function (object, newdata, Tstart, Thoriz = NULL,
+                              Dt = NULL, df_ns = 3, plot = TRUE,
+                              add_density = TRUE, col = "red", lty = 1, lwd = 1,
+                              col_dens = "grey",
+                              xlab = "Predicted Probabilities",
+                              ylab = "Observed Probabilities", main = "", ...) {
+    if (!inherits(object, "jm"))
+        stop("Use only with 'jm' objects.\n")
+    if (!is.data.frame(newdata) || nrow(newdata) == 0)
+        stop("'newdata' must be a data.frame with more than one rows.\n")
+    if (is.null(Thoriz) && is.null(Dt))
+        stop("either 'Thoriz' or 'Dt' must be non null.\n")
+    if (!is.null(Thoriz) && Thoriz <= Tstart)
+        stop("'Thoriz' must be larger than 'Tstart'.")
+    if (is.null(Thoriz))
+        Thoriz <- Tstart + Dt
+    type_censoring <- object$model_info$type_censoring
+    if (type_censoring != "right")
+        stop("'tvROC()' currently only works for right censored data.")
+    Tstart <- Tstart + 1e-06
+    Thoriz <- Thoriz + 1e-06
+    id_var <- object$model_info$var_names$idVar
+    time_var <- object$model_info$var_names$time_var
+    Time_var <- object$model_info$var_names$Time_var
+    event_var <- object$model_info$var_names$event_var
+    if (is.null(newdata[[id_var]]))
+        stop("cannot find the '", id_var, "' variable in newdata.", sep = "")
+    if (is.null(newdata[[time_var]]))
+        stop("cannot find the '", time_var, "' variable in newdata.", sep = "")
+    if (is.null(newdata[[Time_var]]))
+        stop("cannot find the '", Time_var, "' variable in newdata.", sep = "")
+    if (is.null(newdata[[event_var]]))
+        stop("cannot find the '", event_var, "' variable in newdata.", sep = "")
+    newdata <- newdata[newdata[[Time_var]] > Tstart, ]
+    newdata <- newdata[newdata[[time_var]] <= Tstart, ]
+    if (!nrow(newdata))
+        stop("there are no data on subjects who had an observed event time after Tstart",
+             "and longitudinal measurements before Tstart.")
+    newdata[[id_var]] <- newdata[[id_var]][, drop = TRUE]
+    test1 <- newdata[[Time_var]] < Thoriz & newdata[[event_var]] == 1
+    if (!any(test1))
+        stop("it seems that there are no events in the interval [Tstart, Thoriz).")
+    test2 <- newdata[[Time_var]] > Thoriz & newdata[[event_var]] == 1
+    if (!any(test2))
+        stop("it seems that there are no events after Thoriz.")
+    newdata2 <- newdata
+    newdata2[[Time_var]] <- Tstart
+    newdata2[[event_var]] <- 0
+    preds <- predict(object, newdata = newdata2, process = "event",
+                     times = Thoriz, ...)
+    pi_u_t <- preds$pred
+    names(pi_u_t) <- preds$id
+    pi_u_t <- pi_u_t[preds$times > Tstart]
+
+    id <- newdata[[id_var]]
+    Time <- newdata[[Time_var]]
+    event <- newdata[[event_var]]
+    f <- factor(id, levels = unique(id))
+    Time <- tapply(Time, f, tail, 1L)
+    event <- tapply(event, f, tail, 1L)
+    names(Time) <- names(event) <- as.character(unique(id))
+    cal_DF <- data.frame(Time = Time, event = event, preds = pi_u_t[names(Time)])
+    cloglog <- function (x) log(-log(1 - x))
+    Bounds <- quantile(cloglog(pi_u_t), probs = c(0.05, 0.95))
+    form <- paste0("ns(cloglog(preds), df = ", df_ns,
+                   ", B = c(", round(Bounds[1L], 2), ", ",
+                   round(Bounds[2L], 2), "))")
+    form <- paste("Surv(Time, event) ~", form)
+    cal_Cox <- coxph(as.formula(form), data = cal_DF)
+    qs <- quantile(pi_u_t, probs = c(0.01, 0.99))
+    probs_grid <- data.frame(preds = seq(qs[1L], qs[2L], length.out = 100L))
+    obs <- 1 - c(summary(survfit(cal_Cox, newdata = probs_grid), times = Thoriz)$surv)
+    obs_pi_u_t <- 1 - c(summary(survfit(cal_Cox, newdata = cal_DF), times = Thoriz)$surv)
+    if (plot) {
+        plot(probs_grid$preds, obs, type = "l", col = col, lwd = lwd, lty = lty,
+             xlab = xlab, ylab = ylab, main = main, xlim = c(0, 1),
+             ylim = c(0, 1))
+        abline(0, 1, lty = 2)
+        if (add_density) {
+            par(new = TRUE)
+            plot(density(pi_u_t), axes = FALSE, xlab = "", ylab = "", main = "",
+                 col = col_dens)
+            axis(side = 4)
+        }
+        invisible()
+    } else {
+        list("observed" = obs, "predicted" = probs_grid$preds,
+             "pi_u_t" = pi_u_t, "obs_pi_u_t" = obs_pi_u_t)
+    }
+}
+
+calibration_metrics <- function (object, newdata, Tstart, Thoriz = NULL,
+                                 Dt = NULL, df_ns = 3, ...) {
+    comps <- calibration_plot(object, newdata, Tstart, Dt = Dt, df_ns = df_ns,
+                              plot = FALSE)
+    diff <- abs(as.vector(comps$pi_u_t) - comps$obs_pi_u_t)
+    ICI <- mean(diff)
+    E50 <- median(diff)
+    E90 <- unname(quantile(diff, probs = 0.9))
+    c("ICI" = ICI, "E50" = E50, "E90" = E90)
+}
+
+tvBrier <- function (object, newdata, Tstart, Thoriz = NULL, Dt = NULL, ...) {
+    if (!inherits(object, "jm"))
+        stop("Use only with 'jm' objects.\n")
+    if (!is.data.frame(newdata) || nrow(newdata) == 0)
+        stop("'newdata' must be a data.frame with more than one rows.\n")
+    if (is.null(Thoriz) && is.null(Dt))
+        stop("either 'Thoriz' or 'Dt' must be non null.\n")
+    if (!is.null(Thoriz) && Thoriz <= Tstart)
+        stop("'Thoriz' must be larger than 'Tstart'.")
+    if (is.null(Thoriz))
+        Thoriz <- Tstart + Dt
+    type_censoring <- object$model_info$type_censoring
+    if (type_censoring != "right")
+        stop("'tvROC()' currently only works for right censored data.")
+    Tstart <- Tstart + 1e-06
+    Thoriz <- Thoriz + 1e-06
+    id_var <- object$model_info$var_names$idVar
+    time_var <- object$model_info$var_names$time_var
+    Time_var <- object$model_info$var_names$Time_var
+    event_var <- object$model_info$var_names$event_var
+    if (is.null(newdata[[id_var]]))
+        stop("cannot find the '", id_var, "' variable in newdata.", sep = "")
+    if (is.null(newdata[[time_var]]))
+        stop("cannot find the '", time_var, "' variable in newdata.", sep = "")
+    if (is.null(newdata[[Time_var]]))
+        stop("cannot find the '", Time_var, "' variable in newdata.", sep = "")
+    if (is.null(newdata[[event_var]]))
+        stop("cannot find the '", event_var, "' variable in newdata.", sep = "")
+    newdata <- newdata[newdata[[Time_var]] > Tstart, ]
+    newdata <- newdata[newdata[[time_var]] <= Tstart, ]
+    if (!nrow(newdata))
+        stop("there are no data on subjects who had an observed event time after Tstart",
+             "and longitudinal measurements before Tstart.")
+    newdata[[id_var]] <- newdata[[id_var]][, drop = TRUE]
+    test1 <- newdata[[Time_var]] < Thoriz & newdata[[event_var]] == 1
+    if (!any(test1))
+        stop("it seems that there are no events in the interval [Tstart, Thoriz).")
+    test2 <- newdata[[Time_var]] > Thoriz & newdata[[event_var]] == 1
+    if (!any(test2))
+        stop("it seems that there are no events after Thoriz.")
+    newdata2 <- newdata
+    newdata2[[Time_var]] <- Tstart
+    newdata2[[event_var]] <- 0
+    preds <- predict(object, newdata = newdata2, process = "event",
+                     times = Thoriz, ...)
+    pi_u_t <- preds$pred
+    names(pi_u_t) <- preds$id
+    # cumulative risk at Thoriz
+    pi_u_t <- pi_u_t[preds$times > Tstart]
+
+    id <- newdata[[id_var]]
+    Time <- newdata[[Time_var]]
+    event <- newdata[[event_var]]
+    f <- factor(id, levels = unique(id))
+    Time <- tapply(Time, f, tail, 1L)
+    event <- tapply(event, f, tail, 1L)
+    names(Time) <- names(event) <- as.character(unique(id))
+    pi_u_t <- pi_u_t[names(Time)]
+
+    # subjects who had the event before Thoriz
+    ind1 <- Time < Thoriz & event == 1
+    # subjects who had the event after Thoriz
+    ind2 <- Time > Thoriz
+    # subjects who were censored in the interval (Tstart, Thoriz)
+    ind3 <- Time < Thoriz & event == 0
+    if (any(ind3)) {
+        nams <- names(ind3[ind3])
+        preds2 <- predict(object, newdata = newdata[id %in% nams, ],
+                          process = "event", times = Thoriz, ...)
+        weights <- preds2$pred
+        f <- factor(preds2$id, levels = unique(preds2$id))
+        names(weights) <- f
+        weights <- tapply(weights, f, tail, 1)
+    }
+    loss <- function (x) x * x
+    events <- sum(loss(1 - pi_u_t[ind1]), na.rm = TRUE)
+    no_events <- sum(loss(pi_u_t[ind2]), na.rm = TRUE)
+    censored <- if (any(ind3)) {
+        sum(weights * loss(1 - pi_u_t[ind3]) +
+                (1 - weights) * loss(pi_u_t[ind3]), na.rm = TRUE)
+    } else 0.0
+    nr <- length(Time)
+    Brier <- (events + no_events + censored) / nr
+    out <- list(Brier = Brier, nr = nr, Tstart = Tstart, Thoriz = Thoriz,
+                classObject = class(object),
+                nameObject = deparse(substitute(object)))
+    class(out) <- "tvBrier"
+    out
+}
+
+print.tvBrier <- function (x, digits = 4, ...) {
+    if (!inherits(x, "tvBrier"))
+        stop("Use only with 'tvBrier' objects.\n")
+    if (x$classObject == "jm")
+        cat("\nPrediction Error for the Joint Model", x$nameObject)
+    else
+        cat("\nPrediction Error for the Cox model", x$nameObject)
+    cat("\n\nEstimated Brier score:", round(x$Brier, digits))
+    cat("\nAt time:", round(x$Thoriz, digits))
+    cat("\nUsing information up to time: ", round(x$Tstart, digits),
+        " (", x$nr, " subjects still at risk)", sep = "")
+    cat("\n\n")
+    invisible(x)
+}
