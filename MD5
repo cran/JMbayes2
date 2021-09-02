@@ -1,8 +1,8 @@
-bd4bb2288083006518b4a66e813720ad *DESCRIPTION
+2df64dd0aafa350e7f9fcceb28555d45 *DESCRIPTION
 5f0a121018b350efb13f8ea562f5ad9c *NAMESPACE
 67ee6cc36161513244aa7ba6a2f56ad3 *NEWS.md
 d0b04a4d3180618823b3eb06faf1b901 *R/RcppExports.R
-bf251470668e4bf568cfdf7112729002 *R/accuracy_measures.R
+1d369a82290e8266f4faab8d7bbfff7b *R/accuracy_measures.R
 4a71f85b57fb4769563960aa4005031a *R/basic_methods.R
 b15697cffe1d3f05878d2977631f0cf3 *R/create_Wlong_mats.R
 8f41f98835cc75468e77c36156f6bd89 *R/help_functions.R
@@ -16,7 +16,7 @@ b45a08564c6d113a6b133f8f8340a5c4 *data/aids.id.rda
 fdcb143258d4bc1d5b5ae502dbdb9a1b *data/pbc2.rda
 16b173d39aa518a526f58f40cccfd5eb *data/prothro.rda
 d5983a9ed02887996c1085a8615ba031 *data/prothros.rda
-3cebf72ec725c3218565676f34ee88c2 *man/JMbayes2.Rd
+54cbaff01da98266ea4fafcdd00d6251 *man/JMbayes2.Rd
 93f366f2c65be8f8357e438c05f6844e *man/accuracy.Rd
 6b3e3608f33349e64ff8a5c17584e537 *man/aids.Rd
 703eaa8a97d60fb8f797fc961fa08267 *man/coda_methods.Rd
@@ -40,6 +40,6 @@ c64e237c20d05041ca8bac79e7eabcd6 *src/JMbayes2_Surv.h
 489238367135a9363483af2402167ad6 *src/JMbayes2_tau.h
 e4a9a47c4a3aca98677ab8b16336e5de *src/Makevars
 e4a9a47c4a3aca98677ab8b16336e5de *src/Makevars.win
-36758974aa930101bca95f580bf5597d *src/RcppExports.cpp
+77a50e262adbe1075e5076de944748af *src/RcppExports.cpp
 8c3cc0f601d3ffb4fc9f95c600f38fba *src/init.c
-8bbe843e80b520d47d95f02d34689850 *src/mcmc_fit.cpp
+1b97c43508d2f5b3896510a4a39483c0 *src/mcmc_fit.cpp
