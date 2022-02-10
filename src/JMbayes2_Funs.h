@@ -70,6 +70,17 @@ vec group_sum (const vec &x, const uvec &ind) {
   return out;
 }
 
+vec group_sum2 (const vec &x, const uvec &ind) {
+    uvec tt = unique(ind);
+    uword n = tt.n_rows;
+    uvec ind2 = ind - 1;
+    vec out(n);
+    for (uword i = 0; i < n; ++i) {
+        out.at(i) = sum(x.elem(find(ind2 == i)));
+    }
+    return out;
+}
+
 vec create_init_scale(const uword &n, const double &fill_val = 0.1) {
   vec out(n);
   out.fill(fill_val);
@@ -302,6 +313,12 @@ mat propose_mvnorm_mat (const int &n, const cube &S, const vec &scale) {
   }
   mat out = tmp.row(0);
   return out.t();
+}
+
+vec propose_rnorm_vec (const vec &thetas, const vec &scale) {
+  vec proposed_thetas = thetas;
+  proposed_thetas = scale % randn(thetas.n_rows) + thetas;
+  return proposed_thetas;
 }
 
 vec propose_mvnorm_vec (const mat &U, const double &scale) {
@@ -560,6 +577,7 @@ cube chol_cube (const cube &S) {
   return out;
 }
 
+/*
 void transf_eta (mat &eta, const CharacterVector &fun_nams) {
   uword n = eta.n_cols;
   for (uword i = 0; i < n; i++) {
@@ -603,17 +621,78 @@ field<mat> create_Wlong (const field<mat> &eta, const field<uvec> &FunForms,
   }
   return out;
 }
+*/
+
+mat transf_eta (const mat &eta, const CharacterVector &fun_nams) {
+  uword k = fun_nams.length();
+  mat out(eta.n_rows, k, fill::zeros);
+  for (uword i = 0; i < k; i++) {
+    if (fun_nams[i] == "identity") {
+      out.col(i) = eta;
+    } else if (fun_nams[i] == "expit") {
+      out.col(i) = 1.0 / (1.0 + trunc_exp(- eta));
+    } else if (fun_nams[i] == "exp" || fun_nams[i] == "dexp") {
+      out.col(i) = trunc_exp(eta);
+    } else if (fun_nams[i] == "dexpit") {
+      mat pp = 1.0 / (1.0 + trunc_exp(- eta));
+      out.col(i) = pp * (1.0 - pp);
+    } else if (fun_nams[i] == "log") {
+      out.col(i) = trunc_log(eta);
+    } else if (fun_nams[i] == "log2") {
+      out.col(i) = log2(eta);
+    } else if (fun_nams[i] == "log10") {
+      out.col(i) = log10(eta);
+    } else if (fun_nams[i] == "sqrt") {
+      out.col(i) = sqrt(eta);
+    } else if (fun_nams[i] == "poly2") {
+      out.col(i) = square(eta);
+    } else if (fun_nams[i] == "poly3") {
+      out.col(i) = pow(eta, 3);
+    } else if (fun_nams[i] == "poly4") {
+      out.col(i) = pow(eta, 4);
+    } else if (fun_nams[i] == "poly2(expit)") {
+      out.col(i) = square(1.0 / (1.0 + trunc_exp(- eta)));
+    } else if (fun_nams[i] == "poly3(expit)") {
+      out.col(i) = pow(1.0 / (1.0 + trunc_exp(- eta)), 3);
+    } else if (fun_nams[i] == "poly4(expit)") {
+      out.col(i) = pow(1.0 / (1.0 + trunc_exp(- eta)), 4);
+    }
+  }
+  return out;
+}
+
+field<mat> create_Wlong (const field<mat> &eta, const field<mat> &U,
+                         const field<uvec> &FunForms,
+                         const List &Funs_FunForms) {
+  uword n_outcomes = eta.n_elem;
+  field<mat> out(n_outcomes);
+  for (uword i = 0; i < n_outcomes; ++i) {
+    mat eta_i = eta.at(i);
+    List Funs_i = Funs_FunForms[i];
+    uword n = Funs_i.length();
+    field<mat> res(n);
+    for (uword j = 0; j < n; ++j) {
+      res.at(j) = transf_eta(eta_i.col(j), Funs_i[j]);
+    }
+    mat Res = docall_cbindF(res);
+    uvec FF_i = FunForms.at(i);
+    mat U_i = U.at(i);
+    mat Wlong_i(U_i.n_rows, U_i.n_cols, fill::ones);
+    Wlong_i.cols(FF_i) %= Res;
+    out.at(i) = U_i % Wlong_i;
+  }
+  return out;
+}
 
 mat calculate_Wlong (const field<mat> &X, const field<mat> &Z,
                      const field<mat> &U, const mat &Wlong_bar,
                      const mat &Wlong_sds,
                      const field<vec> &betas, const field<mat> &b,
                      const uvec &id, const field<uvec> &FunForms,
-                     const field<uvec> &FunForms_ind,
                      const List &Funs_FunForms) {
   field<mat> eta = linpred_surv(X, betas, Z, b, id);
   mat Wlong =
-    docall_cbindF(create_Wlong(eta, FunForms, U, FunForms_ind, Funs_FunForms));
+    docall_cbindF(create_Wlong(eta, U, FunForms, Funs_FunForms));
   Wlong.each_row() -= Wlong_bar;
   Wlong.each_row() /= Wlong_sds;
   return Wlong;

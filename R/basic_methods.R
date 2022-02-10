@@ -131,7 +131,7 @@ summary.jm <- function (object, ...) {
                 families = families, respVars = respVars,
                 events = object$model_data$delta,
                 control = object$control, time = object$running_time,
-                call = object$call)
+                call = object$call, recurrent = object$model_info$recurrent)
     tab_f <- function(name) {
         out <- data.frame(Mean = object$statistics$Mean[[name]],
                           StDev = object$statistics$SD[[name]],
@@ -163,6 +163,7 @@ summary.jm <- function (object, ...) {
         }
     }
     out$Survival <- do.call(rbind, list(tab_f("gammas"), tab_f("alphas")))
+    out$sigmaF <- tab_f("sigmaF")[c(1, 3, 4)]
     out$fit_stats <- object$fit_stats
     class(out) <- "summary.jm"
     out
@@ -211,6 +212,10 @@ print.summary.jm <- function (x, digits = max(4, getOption("digits") - 4), ...) 
         rownames(mat) <- rownames(D)
     }
     print(noquote(mat), digits = digits)
+    if(x$recurrent) {
+      cat("\nFrailty standard deviation:\n")
+      print(round(x[["sigmaF"]], digits))
+    }
     cat("\nSurvival Outcome:\n")
     print(round(x[["Survival"]], digits))
     n_outcomes <- length(x$families)
@@ -262,6 +267,10 @@ print.jm <- function (x, digits = max(4, getOption("digits") - 4), ...) {
         rownames(mat) <- rownames(D)
     }
     print(noquote(mat), digits = digits)
+    if(xx$recurrent) {
+      cat("\nFrailty standard deviation:\n")
+      print(round(xx[["sigmaF"]], digits))
+    }
     cat("\nSurvival Outcome:\n")
     print(round(xx[["Survival"]], digits))
     n_outcomes <- length(xx$families)
@@ -361,44 +370,69 @@ family.jm <- function (object, ...) {
 ggtraceplot <- function (object, ...) UseMethod("ggtraceplot")
 
 ggtraceplot.jm <- function(object,
-                        parm = c("all", "betas", "sigmas", "D", "bs_gammas",
-                                 "tau_bs_gammas", "gammas", "alphas"),
-                        size = 1, alpha = 0.8,
-                        theme = c('standard', 'catalog', 'metro',
-                                      'pastel', 'beach', 'moonlight', 'goo',
-                                      'sunset'), grid = FALSE,
-                        gridrows = 3, gridcols = 1,
-                        ...) {
-    chain <- iteration <- NULL
-    parm <- match.arg(parm)
-    coltheme <- match.arg(theme)
-    ggdata <- ggprepare(object, parm)
-    n_parms <- length(unique(ggdata$parm))
-    n_chains <- object$control$n_chains
-    if (grid) {
-        gplots <- list(NULL)
-        for (i in seq_len(n_parms)) {
-            gplots[[i]] <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
-                geom_line(aes(x = iteration, y = value, color = chain),
-                          size = size, alpha = alpha) +
-                ggtitle(paste('Traceplot of ', unique(ggdata$parm)[i])) +
-                theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
-                scale_color_manual(values = ggcolthemes[[coltheme]]) +
-                guides(color = guide_legend(override.aes = list(alpha = 1)))
-        }
-        marrangeGrob(grobs = gplots, nrow = gridrows, ncol = gridcols)
-    } else {
-        for (i in seq_len(n_parms)) {
-            g <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
-                geom_line(aes(x = iteration, y = value, color = chain),
-                          size = size, alpha = alpha) +
-                ggtitle(paste('Traceplot of ', unique(ggdata$parm)[i])) +
-                theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
-                scale_color_manual(values = ggcolthemes[[coltheme]]) +
-                guides(color = guide_legend(override.aes = list(alpha = 1)))
-            print(g)
-        }
+                           parm = c("all", "betas", "sigmas", "D", "bs_gammas",
+                                    "tau_bs_gammas", "gammas", "alphas"),
+                           size = 1, alpha = 0.8,
+                           theme = c('standard', 'catalog', 'metro',
+                                     'pastel', 'beach', 'moonlight', 'goo',
+                                     'sunset', 'custom'), grid = FALSE,
+                           gridrows = 3, gridcols = 1, custom_theme = NULL,
+                           ...) {
+  chain <- iteration <- NULL
+  parm <- match.arg(parm)
+  coltheme <- match.arg(theme)
+  ggdata <- ggprepare(object, parm)
+  n_parms <- length(unique(ggdata$parm))
+  n_chains <- object$control$n_chains
+  if(!is.null(custom_theme)) {
+    if (length(custom_theme) != n_chains)
+      stop('User specified custom color themes should be a named character vector with one color specified for each chain')
+    coltheme <- 'custom'
+    ggcolthemes[[coltheme]] <- custom_theme
+  }
+  if (grid) {
+    gplots <- list(NULL)
+    for (i in seq_len(n_parms)) {
+      if (n_chains == 3 | !is.null(custom_theme)) {
+        gplots[[i]] <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
+          geom_line(aes(x = iteration, y = value, color = chain),
+                    size = size, alpha = alpha) +
+          ggtitle(paste('Traceplot of ', unique(ggdata$parm)[i])) +
+          theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
+          scale_color_manual(values = ggcolthemes[[coltheme]]) +
+          guides(color = guide_legend(override.aes = list(alpha = 1)))
+      } else {
+        gplots[[i]] <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
+          geom_line(aes(x = iteration, y = value, color = chain),
+                    size = size, alpha = alpha) +
+          ggtitle(paste('Traceplot of ', unique(ggdata$parm)[i])) +
+          theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
+          guides(color = guide_legend(override.aes = list(alpha = 1)))
+      }
     }
+    marrangeGrob(grobs = gplots, nrow = gridrows, ncol = gridcols)
+  } else {
+    for (i in seq_len(n_parms)) {
+      if (n_chains == 3 | !is.null(custom_theme)) {
+        g <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
+          geom_line(aes(x = iteration, y = value, color = chain),
+                    size = size, alpha = alpha) +
+          ggtitle(paste('Traceplot of ', unique(ggdata$parm)[i])) +
+          theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
+          scale_color_manual(values = ggcolthemes[[coltheme]]) +
+          guides(color = guide_legend(override.aes = list(alpha = 1)))
+        print(g)
+      } else {
+        g <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
+          geom_line(aes(x = iteration, y = value, color = chain),
+                    size = size, alpha = alpha) +
+          ggtitle(paste('Traceplot of ', unique(ggdata$parm)[i])) +
+          theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
+          guides(color = guide_legend(override.aes = list(alpha = 1)))
+        print(g)
+      }
+    }
+  }
 }
 
 ggdensityplot <- function (object, ...) UseMethod("ggdensityplot")
@@ -408,9 +442,9 @@ ggdensityplot.jm <- function(object,
                                "tau_bs_gammas", "gammas", "alphas"),
                       size = 1, alpha = 0.6,
                       theme = c('standard', 'catalog', 'metro',
-                                    'pastel', 'beach', 'moonlight', 'goo',
-                                    'sunset'), grid = FALSE,
-                      gridrows = 3, gridcols = 1,
+                                'pastel', 'beach', 'moonlight', 'goo',
+                                'sunset', 'custom'), grid = FALSE,
+                      gridrows = 3, gridcols = 1, custom_theme = NULL,
                       ...) {
     chain <- NULL
     parm <- match.arg(parm)
@@ -418,30 +452,55 @@ ggdensityplot.jm <- function(object,
     ggdata <- ggprepare(object, parm)
     n_parms <- length(unique(ggdata$parm))
     n_chains <- object$control$n_chains
+    if(!is.null(custom_theme)) {
+      if (length(custom_theme) != n_chains)
+        stop('User specified custom color themes should be a named character vector with one color specified for each chain')
+      coltheme <- 'custom'
+      ggcolthemes[[coltheme]] <- custom_theme
+    }
     if (grid) {
         gplots <- list(NULL)
         for (i in seq_len(n_parms)) {
+          if (n_chains == 3 | !is.null(custom_theme)) {
             gplots[[i]] <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
-                geom_density(aes(x = value, color = chain, fill = chain),
-                             size = size, alpha = alpha) +
-                ggtitle(paste('Density plot of ', unique(ggdata$parm)[i])) +
-                theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
-                scale_color_manual(values = ggcolthemes[[coltheme]]) +
-                scale_fill_manual(values = ggcolthemes[[coltheme]]) +
-                guides(color = guide_legend(override.aes = list(alpha = 1)))
+              geom_density(aes(x = value, color = chain, fill = chain),
+                           size = size, alpha = alpha) +
+              ggtitle(paste('Density plot of ', unique(ggdata$parm)[i])) +
+              theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
+              scale_color_manual(values = ggcolthemes[[coltheme]]) +
+              scale_fill_manual(values = ggcolthemes[[coltheme]]) +
+              guides(color = guide_legend(override.aes = list(alpha = 1)))
+          } else {
+            gplots[[i]] <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
+              geom_density(aes(x = value, color = chain, fill = chain),
+                           size = size, alpha = alpha) +
+              ggtitle(paste('Density plot of ', unique(ggdata$parm)[i])) +
+              theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
+              guides(color = guide_legend(override.aes = list(alpha = 1)))
+          }
         }
         marrangeGrob(grobs = gplots, nrow = gridrows, ncol = gridcols)
     } else {
         for (i in seq_len(n_parms)) {
+          if (n_chains == 3 | !is.null(custom_theme)) {
             g <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
-                geom_density(aes(x = value, color = chain, fill = chain),
-                             size = size, alpha = alpha) +
-                ggtitle(paste('Density plot of ', unique(ggdata$parm)[i])) +
-                theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
-                scale_color_manual(values = ggcolthemes[[coltheme]]) +
-                scale_fill_manual(values = ggcolthemes[[coltheme]]) +
-                guides(color = guide_legend(override.aes = list(alpha = 1)))
+              geom_density(aes(x = value, color = chain, fill = chain),
+                           size = size, alpha = alpha) +
+              ggtitle(paste('Density plot of ', unique(ggdata$parm)[i])) +
+              theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
+              scale_color_manual(values = ggcolthemes[[coltheme]]) +
+              scale_fill_manual(values = ggcolthemes[[coltheme]]) +
+              guides(color = guide_legend(override.aes = list(alpha = 1)))
             print(g)
+          } else {
+            g <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
+              geom_density(aes(x = value, color = chain, fill = chain),
+                           size = size, alpha = alpha) +
+              ggtitle(paste('Density plot of ', unique(ggdata$parm)[i])) +
+              theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
+              guides(color = guide_legend(override.aes = list(alpha = 1)))
+            print(g)
+          }
         }
     }
 }
@@ -515,7 +574,7 @@ print.compare_jm <- function (x, ...) {
     cat("\nThe criteria are calculated based on the", x$type, "log-likelihood.")
 }
 
-crLong <- function (data, statusVar, censLevel, nameStrata = "strata",
+crisk_setup <- function (data, statusVar, censLevel, nameStrata = "strata",
           nameStatus = "status2") {
     n <- nrow(data)
     status <- data[[statusVar]]
@@ -536,8 +595,8 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL,
                         type_pred = c("response", "link"),
                         type = c("subject_specific", "mean_subject"),
                         level = 0.95, return_newdata = FALSE,
-                        n_samples = 200L, n_mcmc = 55L, cores = NULL,
-                        seed = 123L, ...) {
+                        return_mcmc = FALSE, n_samples = 200L, n_mcmc = 55L,
+                        cores = NULL, seed = 123L, ...) {
     process <- match.arg(process)
     type_pred <- match.arg(type_pred)
     type <- match.arg(type)
@@ -545,24 +604,112 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL,
     time_var <- object$model_info$var_names$time_var
     Time_var <- object$model_info$var_names$Time_var
     event_var <- object$model_info$var_names$event_var
-    if (is.null(newdata[[Time_var]]) || is.null(newdata[[event_var]])) {
-        newdata[[event_var]] <- 0
-        last_time <- function (x) max(x, na.rm = TRUE)
-        f <- factor(newdata[[id_var]], unique(newdata[[id_var]]))
-        newdata[[Time_var]] <- ave(newdata[[time_var]], f, FUN = last_time)
+    respVars <- unlist(object$model_info$var_names$respVars)
+    if (object$model_info$CR_MS && is.data.frame(newdata)) {
+        stop("for competing risks and multi-state models, argument 'newdata' ",
+             "must be a list of two data.frames, one for the longitudinal ",
+             "outcomes and one for the event process, the latter under the ",
+             "correct format.\n")
+    }
+    if (!is.data.frame(newdata)) {
+        if (!is.list(newdata) || length(newdata) != 2
+            || !names(newdata) %in% c("newdataL", "newdataE")) {
+            stop("'newdata' must be a list with two data.frame elements ",
+                 "named 'newdataL' and 'newdataE'.\n")
+        }
+        for (i in seq_along(respVars)) {
+            v <- respVars[i]
+            if (is.null(newdata$newdataE[[v]])) {
+                newdata$newdataE[[v]] <- rep(0.1, nrow(newdata$newdataE))
+            }
+        }
+        termsL <- object$model_info$terms$terms_FE_noResp
+        all_vars <- unlist(lapply(termsL, all.vars), use.names = FALSE)
+        all_vars <- all_vars[!all_vars %in% time_var]
+        missing_vars <- all_vars[!all_vars %in% names(newdata$newdataE)]
+        if (length(missing_vars)) {
+            stop("the data.frame 'newdata$newdataE' should contain the ",
+                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
+        }
+        missing_vars <- all_vars[!all_vars %in% names(newdata$newdataL)]
+        if (length(missing_vars)) {
+            stop("the data.frame 'newdata$newdataL' should contain the ",
+                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
+        }
+    }
+    if (is.data.frame(newdata)) {
+        if (is.null(newdata[[event_var]])) newdata[[event_var]] <- 0
+        if (is.null(newdata[[Time_var]])) {
+            last_time <- function (x) max(x, na.rm = TRUE)
+            f <- factor(newdata[[id_var]], unique(newdata[[id_var]]))
+            newdata[[Time_var]] <- ave(newdata[[time_var]], f, FUN = last_time)
+        }
+        termsL <- object$model_info$terms$terms_FE_noResp
+        all_vars <- unlist(lapply(termsL, all.vars), use.names = FALSE)
+        all_vars <- all_vars[!all_vars %in% time_var]
+        all_vars <- c(all_vars, all.vars(object$model_info$terms$terms_Surv_noResp))
+        missing_vars <- all_vars[!all_vars %in% names(newdata)]
+        if (length(missing_vars)) {
+            stop("the data.frame 'newdata' should contain the ",
+                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
+        }
+    }
+    if (!is.null(newdata2) && !is.data.frame(newdata2)) {
+        if (!is.list(newdata2) || length(newdata2) != 2
+            || !names(newdata2) %in% c("newdataL", "newdataE")) {
+            stop("'newdata' must be a list with two data.frame elements ",
+                 "named 'newdataL' and 'newdataE'.\n")
+        }
+        for (i in seq_along(respVars)) {
+            v <- respVars[i]
+            if (is.null(newdata2$newdataE[[v]])) {
+                newdata2$newdataE[[v]] <- rep(0.1, nrow(newdata2$newdataE))
+            }
+        }
+        termsL <- object$model_info$terms$terms_FE_noResp
+        all_vars <- unlist(lapply(termsL, all.vars), use.names = FALSE)
+        all_vars <- all_vars[!all_vars %in% time_var]
+        missing_vars <- all_vars[!all_vars %in% names(newdata2$newdataE)]
+        if (length(missing_vars)) {
+            stop("the data.frame 'newdata2$newdataE' should contain the ",
+                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
+        }
+        missing_vars <- all_vars[!all_vars %in% names(newdata2$newdataL)]
+        if (length(missing_vars)) {
+            stop("the data.frame 'newdata2$newdataL' should contain the ",
+                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
+        }
+    }
+    if (!is.null(newdata2) && is.data.frame(newdata2)) {
+        if (is.null(newdata2[[event_var]])) newdata2[[event_var]] <- 0
+        if (is.null(newdata2[[Time_var]])) {
+            last_time <- function (x) max(x, na.rm = TRUE)
+            f <- factor(newdata2[[id_var]], unique(newdata2[[id_var]]))
+            newdata[[Time_var]] <- ave(newdata2[[time_var]], f, FUN = last_time)
+        }
+        termsL <- object$model_info$terms$terms_FE_noResp
+        all_vars <- unlist(lapply(termsL, all.vars), use.names = FALSE)
+        all_vars <- all_vars[!all_vars %in% time_var]
+        all_vars <- c(all_vars, all.vars(object$model_info$terms$terms_Surv_noResp))
+        missing_vars <- all_vars[!all_vars %in% names(newdata2)]
+        if (length(missing_vars)) {
+            stop("the data.frame 'newdata2' should contain the ",
+                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
+        }
     }
     if (is.null(cores)) {
-        n <- length(unique(newdata[[object$model_info$var_names$idVar]]))
+        n <- if (!is.data.frame(newdata)) length(unique(newdata$newdataL[[id_var]]))
+        else length(unique(newdata[[id_var]]))
         cores <- if (n > 20) 4L else 1L
     }
     components_newdata <- get_components_newdata(object, newdata, n_samples,
                                                  n_mcmc, cores, seed)
     if (process == "longitudinal") {
         predict_Long(object, components_newdata, newdata, newdata2, times, type,
-                     type_pred, level, return_newdata)
+                     type_pred, level, return_newdata, return_mcmc)
     } else {
-        predict_Event(object, components_newdata, newdata, times, level,
-                      return_newdata)
+        predict_Event(object, components_newdata, newdata, newdata2, times,
+                      level, return_newdata, return_mcmc)
     }
 }
 
@@ -572,13 +719,16 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
                              xlab = "Follow-up Time", ylab_long = NULL,
                              ylab_event = "Cumulative Risk", main = "",
                              lwd_long = 2, lwd_event = 2,
-                             col_line_long = "blue", col_line_event = "red",
+                             ylim_long_outcome_range = TRUE,
+                             col_line_long = "#0000FF",
+                             col_line_event = c("#FF0000", "#03BF3D", "#8000FF"),
                              pch_points = 16, col_points = "blue", cex_points = 1,
-                             fill_CI_long = "#0000FF44",
-                             fill_CI_event = "#FF000044", cex_xlab = 1,
-                             cex_ylab_long = 1, cex_ylab_event = 1, cex_main = 1,
-                             cex_axis = 1, col_axis = "black",
-                             pos_ylab_long = c(0.1, 2, 0.08), bg = "white", ...) {
+                             fill_CI_long = "#0000FF4D",
+                             fill_CI_event = c("#FF00004D", "#03BF3D4D", "#8000FF4D"),
+                             cex_xlab = 1, cex_ylab_long = 1, cex_ylab_event = 1,
+                             cex_main = 1, cex_axis = 1, col_axis = "black",
+                             pos_ylab_long = c(0.1, 2, 0.08), bg = "white",
+                             ...) {
     process_x <- attr(x, "process")
     pred_Long <- if (process_x == "longitudinal") x
     pred_Event <- if (process_x == "event") x
@@ -678,9 +828,14 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
         times <- pred_Long[[time_var]]
         ry <- range(preds, low, upp)
         rx <- range(times)
+        y_lim <- if (ylim_long_outcome_range) {
+            range(f(ranges[[outcome]]), ry)
+        } else {
+            ry
+        }
         plot(rx, ry, type = "n", xaxt = "n", bty = if (box) "o" else "n",
              xlab = if (add_xlab) xlab  else "", xlim = xlim, col.axis = col_axis,
-             ylim = range(f(ranges[[outcome]]), ry), ylab = ylab_long[outcome],
+             ylim = y_lim, ylab = ylab_long[outcome],
              cex.lab = cex_ylab_long, cex.axis = cex_axis, col.lab = col_axis,
              col.axis = col_axis)
         if (!add_xlab) {
@@ -706,6 +861,11 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
         preds <- fun_event(pred_Event[[ind]])
         low <- fun_event(pred_Event[[ind + 1]])
         upp <- fun_event(pred_Event[[ind + 2]])
+        strata <- pred_Event[["_strata"]]
+        if (is.null(strata)) strata <- rep(1, length(preds))
+        unq_strata <- sort(unique(strata))
+        col_line_event <- rep(col_line_event, length.out = length(unq_strata))
+        fill_CI_event <- rep(fill_CI_event, length.out = length(unq_strata))
         times <- pred_Event[[time_var]]
         ry <- sort(fun_event(c(0, 1)))
         rx <- range(times)
@@ -714,11 +874,16 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
         if (box) box(col = col_axis)
         axis(axis_side, cex.axis = cex_axis, col = col_axis,
              col.ticks = col_axis, col.axis = col_axis)
-        if (CI_event) {
-            polygon(c(times, rev(times)), c(low, rev(upp)), border = NA,
-                    col = fill_CI_event)
+        for (i in seq_along(unq_strata)) {
+            ind_str <- strata == unq_strata[i]
+            if (CI_event) {
+                polygon(c(times[ind_str], rev(times[ind_str])),
+                        c(low[ind_str], rev(upp[ind_str])), border = NA,
+                        col = fill_CI_event[i])
+            }
+            lines(times[ind_str], preds[ind_str], lwd = lwd_event,
+                  col = col_line_event[i])
         }
-        lines(times, preds, lwd = lwd_long, col = col_line_event)
     }
     if (is.null(pred_Event)) {
         for (i in seq_along(outcomes)) {
@@ -801,4 +966,45 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
         }
     }
     invisible()
+}
+
+rc_setup <- function(rc_data, trm_data,
+                     rc_idVar = "id", rc_statusVar = "status",
+                     rc_startVar = "start", rc_stopVar = "stop",
+                     trm_idVar = "id", trm_statusVar = "status",
+                     trm_stopVar = "stop",
+                     nameStrata = "strata", nameStatus = "status") {
+  # warnings
+  if(!setequal(rc_data[[rc_idVar]],  trm_data[[trm_idVar]])) {
+    stop("The groups/subjects in both datasets do not seem to match.")
+  }
+  if(any(rc_data[[rc_startVar]]>rc_data[[rc_stopVar]])) {
+    stop(paste0("'", rc_stopVar, "' cannot be smaller than '", rc_startVar,".'"))
+  }
+  rc_bol <- c(rc_idVar, rc_statusVar, rc_startVar, rc_stopVar) %in% names(rc_data)
+  if(any(!rc_bol)) {
+    stop(paste0("\nThe variable '", c(rc_idVar, rc_statusVar, rc_startVar, rc_stopVar)[!rc_bol],
+                "' is not present in 'rc_data' dataset."))
+  }
+  trm_bol <- c(trm_idVar, trm_statusVar, trm_stopVar) %in% names(trm_data)
+  if(any(!trm_bol)) {
+    stop(paste0("\nThe variable '", c(trm_idVar, trm_statusVar, trm_stopVar)[!trm_bol],
+                "' is not present in 'trm_data' dataset."))
+  }
+  # sort datasets by id (& start time)
+  rc_data <- rc_data[order(rc_data[[rc_idVar]], rc_data[[rc_startVar]]), ]
+  trm_data <- trm_data[order(trm_data[[trm_idVar]]), ]
+  # create new dataset
+  tail_rows <- cumsum(rle(rc_data[[rc_idVar]])$length)
+  new_rows <- sort(c(seq_along(rc_data[[rc_idVar]]), tail_rows))
+  dataOut <- rc_data[new_rows, , drop = FALSE]
+  dataOut[[nameStrata]] <- 1
+  tail_rows <- tail_rows + seq_along(tail_rows)
+  dataOut[[nameStrata]][tail_rows] <- 2
+  dataOut[[nameStrata]] <- as.factor(dataOut[[nameStrata]])
+  dataOut[[rc_startVar]][tail_rows] <- 0
+  dataOut[[rc_stopVar]][tail_rows]  <- trm_data[[trm_stopVar]]
+  dataOut[[nameStatus]] <- dataOut[[rc_statusVar]]
+  dataOut[[nameStatus]][tail_rows] <- trm_data[[trm_statusVar]]
+  dataOut
 }

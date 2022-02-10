@@ -9,7 +9,7 @@ cd <- function (x, f, ..., eps = 0.001) {
         x2[i] <- x[i] - eps * ex[i]
         diff.f <- c(f(x1, ...) - f(x2, ...))
         diff.x <- x1[i] - x2[i]
-        res[i] <- diff.f/diff.x
+        res[i] <- diff.f / diff.x
     }
     res
 }
@@ -25,7 +25,7 @@ cd_vec <- function (x, f, ..., eps = 0.001) {
         x2[i] <- x[i] - eps * ex[i]
         diff.f <- c(f(x1, ...) - f(x2, ...))
         diff.x <- x1[i] - x2[i]
-        res[, i] <- diff.f/diff.x
+        res[, i] <- diff.f / diff.x
     }
     0.5 * (res + t(res))
 }
@@ -155,43 +155,6 @@ expand_Dexps <- function (Form, respVar) {
     reformulate(tlabs)
 }
 
-LongData_HazardModel <- function (time_points, data, times, ids, timeVar) {
-    unq_ids <- unique(ids)
-    fids <- factor(ids, levels = unq_ids)
-    tt <- if (is.list(time_points)) {
-        time_points
-    } else {
-        if (!is.matrix(time_points)) {
-            time_points <- as.matrix(time_points)
-        }
-        split(time_points, row(time_points))
-    }
-    #if (length(tt) != length(unq_ids)) {
-    #    stop("the length of unique 'ids' does not match the number of rows ",
-    #         "of 'time_points'.")
-    #}
-    ind <- mapply(findInterval, tt, split(times, fids))
-    rownams_id <- split(row.names(data), fids)
-    if (!is.list(ind)) {
-        ind[ind < 1] <- 1
-        if (!is.matrix(ind)) {
-            ind <- rbind(ind)
-        }
-        ind <- mapply2(`[`, rownams_id, split(ind, col(ind)))
-    } else {
-        ind <- lapply(ind, function (x) {x[x < 1] <- 1; x})
-        ind <- mapply2(`[`, rownams_id, ind)
-    }
-    data <- data[unlist(ind, use.names = FALSE), ]
-    data[[timeVar]] <- if (is.matrix(time_points)) {
-        c(t(time_points))
-    } else {
-        unlist(time_points, use.names = FALSE)
-    }
-    row.names(data) <- seq_len(nrow(data))
-    data
-}
-
 last_rows <- function (data, ids) {
     fidVar <- factor(ids, levels = unique(ids))
     data[tapply(row.names(data), fidVar, tail, n = 1L), ]
@@ -253,87 +216,6 @@ extract_attributes <- function (form, data) {
          direction = direction[!sapply(direction, is.null)])
 }
 
-design_matrices_functional_forms <-
-    function (time, terms, data, timeVar, idVar, idT, Fun_Forms, Xbar = NULL,
-              eps, direction) {
-        data[] <- lapply(data, function (x) locf(locf(x), fromLast = TRUE))
-        desgn_matr <- function (time, terms, Xbar) {
-            D <- LongData_HazardModel(time, data, data[[timeVar]],
-                                      data[[idVar]], idT, timeVar)
-            mf <- lapply(terms, model.frame.default, data = D)
-            X <- mapply2(model.matrix.default, terms, mf)
-            if (!is.null(Xbar))
-                X <- mapply2(function (m, mu) m - rep(mu, each = nrow(m)), X, Xbar)
-            X
-        }
-        degn_matr_slp <- function (time, terms, Xbar, eps, direction) {
-            K <- length(terms)
-            out <- vector("list", K)
-            for (i in seq_len(K)) {
-                direction_i <- if (length(direction[[i]])) direction[[i]][[1L]] else "both"
-                eps_i <- if (length(eps[[i]])) eps[[i]][[1L]] else 0.001
-                if (direction_i == "both") {
-                    t1 <- time + eps_i
-                    t2 <- pmax(time - eps_i, 0)
-                    e <- 2 * eps_i
-                } else {
-                    t1 <- time
-                    t2 <- pmax(time - eps_i, 0)
-                    e <- eps_i
-                }
-                terms_i <- terms[[i]]
-                D1 <- LongData_HazardModel(t1, data, data[[timeVar]],
-                                           data[[idVar]], idT, timeVar)
-                mf1 <- model.frame.default(terms_i, data = D1)
-                X1 <- model.matrix.default(terms_i, mf1)
-                D2 <- LongData_HazardModel(t2, data, data[[timeVar]],
-                                           data[[idVar]], idT, timeVar)
-                mf2 <- model.frame.default(terms_i, data = D2)
-                X2 <- model.matrix.default(terms_i, mf2)
-                if (!is.null(Xbar)) {
-                    X1 <- X1 - rep(Xbar[[i]], each = nrow(X1))
-                    X2 <- X2 - rep(Xbar[[i]], each = nrow(X2))
-                }
-                out[[i]] <- (X1 - X2) / e
-            }
-            out
-        }
-        degn_matr_area <- function (time, terms, Xbar) {
-            if (!is.list(time)) {
-                time <- if (is.matrix(time)) split(time, row(time))
-                else split(time, seq_along(time))
-            }
-            GK <- gaussKronrod(15L)
-            wk <- GK$wk
-            sk <- GK$sk
-            quadrature_points <- function (x) {
-                P <- unname(x / 2)
-                sk <- outer(P, sk + 1)
-                # we divide with x to obtain the area up to time t, divided by t
-                # to account for the length of the interval
-                list(P = c(t(outer(P / x, wk))), sk = sk)
-            }
-            qp <- lapply(time, quadrature_points)
-            ss <- lapply(qp, function (x) c(t(x[['sk']])))
-            Pwk <- unlist(lapply(qp, '[[', 'P'), use.names = FALSE)
-            M <- desgn_matr(ss, terms, Xbar)
-            M <- lapply(M, "*", Pwk)
-            sum_qp <- function (m) {
-                n <- nrow(m)
-                grp <- rep(seq_len(round(n / 15)), each = 15L)
-                rowsum(m, grp, reorder = FALSE)
-            }
-            lapply(M, sum_qp)
-        }
-        ################
-        out <- list("value" = desgn_matr(time, terms, Xbar),
-                    "slope" = degn_matr_slp(time, terms, Xbar, eps, direction),
-                    "area" = degn_matr_area(time, terms, Xbar))
-        out <- lapply(seq_along(Fun_Forms), function (i) lapply(out[Fun_Forms[[i]]], "[[", i))
-        names(out) <- names(Fun_Forms)
-        out
-}
-
 extract_D <- function (object) {
     if (inherits(object, "lme")) {
         lapply(pdMatrix(object$modelStruct$reStruct), "*",
@@ -347,37 +229,6 @@ knots <- function (xl, xr, ndx, deg) {
     # From Paul Eilers
     dx <- (xr - xl) / ndx
     seq(xl - deg * dx, xr + deg * dx, by = dx)
-}
-
-SurvData_HazardModel <- function (time_points, data, times, ids, time_var) {
-    unq_ids <- unique(ids)
-    fids <- factor(ids, levels = unq_ids)
-    tt <- if (is.list(time_points)) {
-        time_points
-    } else {
-        if (!is.matrix(time_points)) {
-            time_points <- as.matrix(time_points)
-        }
-        sp <- split(time_points, row(time_points))
-        names(sp) <- rownames(time_points)
-        sp
-    }
-    spl_times <- split(times, fids)[names(tt)]
-    ind <- mapply(findInterval, tt, spl_times)
-    rownams_id <- split(row.names(data), fids)
-    if (!is.list(ind)) {
-        ind[ind < 1] <- 1
-        if (!is.matrix(ind)) {
-            ind <- rbind(ind)
-        }
-        ind <- mapply2(`[`, rownams_id, split(ind, col(ind)))
-    } else {
-        ind <- lapply(ind, function (x) {x[x < 1] <- 1; x})
-        ind <- mapply2(`[`, rownams_id, ind)
-    }
-    data <- data[unlist(ind, use.names = FALSE), ]
-    if (is.matrix(time_points)) data[[time_var]] <- c(t(time_points))
-    data
 }
 
 extract_b <- function (object, id, n) {
@@ -402,6 +253,7 @@ extract_log_sigmas <- function (object) {
 value <- area <- function (x) rep(1, NROW(x))
 vexpit <- Dexpit <- vexp <- Dexp <- function (x) rep(1, NROW(x))
 vsqrt <- vlog <- vlog2 <- vlog10 <- function (x) rep(1, NROW(x))
+poly2 <- poly3 <- poly4 <- function (x) rep(1, NROW(x))
 slope <- function (x, eps = 0.001, direction = "both") {
     out <- rep(1, NROW(x))
     temp <- list(eps = eps, direction = direction)
@@ -584,41 +436,60 @@ extractFuns_FunForms <- function (Form, data) {
         out[f("log2")] <- "log2"
         out[f("log10")] <- "log10"
         out[f("sqrt")] <- "sqrt"
-        out[f("square")] <- "square"
-        out[1L] # <- to change: if the same term different functions
+        out[f("poly2")] <- "poly2"
+        out[f("poly3")] <- "poly3"
+        out[f("poly4")] <- "poly4"
+        out[f("poly2(expit")] <- "poly2"
+        out[f("poly3(expit")] <- "poly3"
+        out[f("poly4(expit")] <- "poly4"
+        out
     }
-    mapply(get_fun, FForms, names(FForms))
+    mapply2(get_fun, FForms, names(FForms))
 }
 
 transf_eta <- function (eta, fun_nams) {
+    out <- matrix(0.0, NROW(eta), length(fun_nams))
     for (j in seq_along(fun_nams)) {
-        if (fun_nams[j] == "expit") {
-            eta[, j] <- plogis(eta[, j])
+        if (fun_nams[j] == "identity") {
+            out[, j] <- eta
+        } else if (fun_nams[j] == "expit") {
+            out[, j] <- plogis(eta)
         } else if (fun_nams[j] == "dexpit") {
-            eta[, j] <- plogis(eta[, j]) * plogis(eta[, j], lower.tail = FALSE)
+            out[, j] <- plogis(eta) * plogis(eta, lower.tail = FALSE)
         } else if (fun_nams[j] == "exp") {
-            eta[, j] <- exp(eta[, j])
+            out[, j] <- exp(eta)
         } else if (fun_nams[j] == "log") {
-            eta[, j] <- log(eta[, j])
+            out[, j] <- log(eta)
         } else if (fun_nams[j] == "sqrt") {
-            eta[, j] <- sqrt(eta[, j])
-        } else if (fun_nams[j] == "square") {
-            eta[, j] <- eta[, j] * eta[, j]
+            out[, j] <- sqrt(eta)
+        } else if (fun_nams[j] == "poly2") {
+            out[, j] <- eta * eta
+        } else if (fun_nams[j] == "poly3") {
+            out[, j] <- eta * eta * eta
+        } else if (fun_nams[j] == "poly4") {
+            out[, j] <- eta * eta * eta * eta
+        } else if (fun_nams[j] == "poly2(expit") {
+            out[, j] <- plogis(eta) * plogis(eta)
+        } else if (fun_nams[j] == "poly3(expit") {
+            out[, j] <- plogis(eta) * plogis(eta) * plogis(eta)
+        } else if (fun_nams[j] == "poly4(expit") {
+            out[, j] <- plogis(eta) * plogis(eta) * plogis(eta) * plogis(eta)
         }
     }
-    eta
+    out
 }
 
-create_Wlong <- function (eta, functional_forms, U, Funs_FunsForms) {
+create_Wlong <- function (eta, functional_forms, U, Funs_FunForms) {
     Wlong <- vector("list", length(eta))
     for (i in seq_along(functional_forms)) {
         FF_i <- functional_forms[[i]]
-        eta_i <- transf_eta(eta[[i]], Funs_FunsForms[[i]])
+        eta_i <- mapply2(transf_eta, split(eta[[i]], col(eta[[i]])),
+                         Funs_FunForms[[i]])
         U_i <- U[[i]]
-        Wlong_i <- matrix(1.0, nrow(eta_i), max(unlist(FF_i)))
+        Wlong_i <- matrix(1.0, nrow(U_i), ncol(U_i))
         for (j in seq_along(FF_i)) {
             ind <- FF_i[[j]]
-            Wlong_i[, ind] <- Wlong_i[, ind] * eta_i[, j]
+            Wlong_i[, ind] <- Wlong_i[, ind] * eta_i[[j]]
         }
         Wlong[[i]] <- U_i * Wlong_i
     }
@@ -993,54 +864,172 @@ jitter2 <- function (x, factor = 2) {
     }
 }
 
-SurvData_HazardModel <- function (time_points, data, times, ids, time_var) {
+# times_to_fill = t2
+# data = data
+# times_data = data[[timeVar]]
+# ids = data[[idVar]]
+# index = match(idT, unique(idT))
+
+SurvData_HazardModel <- function (times_to_fill, data, times_data, ids,
+                                   time_var, index = NULL) {
     unq_ids <- unique(ids)
     fids <- factor(ids, levels = unq_ids)
-    if (!is.matrix(time_points)) {
-        time_points <- as.matrix(time_points)
+    # checks
+    if (is.null(index)) {
+        index <- match(ids, unq_ids)
     }
-    tt <- split(time_points, row(time_points))
-    spl_times <- split(times, fids)[unclass(fids)]
-    rownams_id <- split(row.names(data), fids)[unclass(fids)]
-    ind <- mapply2(findInterval, tt, spl_times)
-    ind[] <- lapply(ind, function (x) {x[x < 1] <- 1; x})
-    ind <- mapply2(`[`, rownams_id, ind)
+    if (length(times_to_fill) != length(unq_ids) && is.null(index)) {
+        stop("length 'times_to_fill' does not match the length of unique 'ids'.")
+    }
+    if (nrow(data) != length(fids)) {
+        stop("the number of rows of 'data' does not match the length of 'ids'.")
+    }
+    if (nrow(data) != length(times_data)) {
+        stop("the number of rows of 'data' does not match the length of 'times_data'.")
+    }
+    spl_times <- split(times_data, fids)
+
+    first_val_zero <- sapply(spl_times[index], "[", 1L) != 0
+    spl_times <- lapply(spl_times[index], function (x) if (x[1L] == 0) x else c(0, x))
+    ind <- mapply2(findInterval, x = times_to_fill, vec = spl_times,
+                   all.inside = first_val_zero)
+    rownams_id <- split(row.names(data), fids)
+    ind <- mapply2(`[`, rownams_id[index], ind)
     data <- data[unlist(ind, use.names = FALSE), ]
-    data[[time_var]] <- c(t(time_points))
+    data[[time_var]] <- unlist(times_to_fill, use.names = FALSE)
     row.names(data) <- seq_len(nrow(data))
     data
 }
 
-LongData_HazardModel <- function (time_points, data, times, ids, idT, time_var) {
+LongData_HazardModel <- function (times_to_fill, data, times_data, ids,
+                                   time_var, index = NULL) {
     unq_ids <- unique(ids)
     fids <- factor(ids, levels = unq_ids)
-    idT. <- match(idT, unique(idT))
-    tt <- if (is.list(time_points)) {
-        time_points
-    } else {
-        if (!is.matrix(time_points)) {
-            time_points <- as.matrix(time_points)
+    if (!is.list(times_to_fill)) {
+        if (!is.matrix(times_to_fill)) {
+            times_to_fill <- as.matrix(times_to_fill)
         }
-        split(time_points, row(time_points))
+        times_to_fill <- split(times_to_fill, row(times_to_fill))
     }
-    spl_times <- split(times, fids)
+    # checks
+    if (is.null(index)) {
+        index <- seq_along(unq_ids)
+    }
+    if (length(times_to_fill) != length(unq_ids) && is.null(index)) {
+        stop("length 'times_to_fill' does not match the length of unique 'ids'.")
+    }
+    if (nrow(data) != length(fids)) {
+        stop("the number of rows of 'data' does not match the length of 'ids'.")
+    }
+    if (nrow(data) != length(times_data)) {
+        stop("the number of rows of 'data' does not match the length of 'times_data'.")
+    }
+    spl_times <- split(times_data, fids)
+    first_val_zero <- sapply(spl_times[index], "[", 1L) != 0
+    spl_times <- lapply(spl_times[index], function (x) if (x[1L] == 0) {x[1L] <- -1e04; x} else c(-1e04, x))
+    ind <- mapply2(findInterval, x = times_to_fill, vec = spl_times,
+                   all.inside = first_val_zero)
     rownams_id <- split(row.names(data), fids)
-    if (length(spl_times) < length(tt)) {
-        spl_times <- spl_times[idT.]
-        rownams_id <- rownams_id[idT.]
-    }
-    ind <- mapply2(findInterval, tt, spl_times)
-    ind[] <- lapply(ind, function (x) {x[x < 1] <- 1; x})
-    ind <- mapply2(`[`, rownams_id, ind)
+    ind <- mapply2(`[`, rownams_id[index], ind)
     data <- data[unlist(ind, use.names = FALSE), ]
-    data[[time_var]] <- if (is.matrix(time_points)) {
-        c(t(time_points))
-    } else {
-        unlist(time_points, use.names = FALSE)
-    }
+    data[[time_var]] <- unlist(times_to_fill, use.names = FALSE)
     row.names(data) <- seq_len(nrow(data))
     data
 }
+
+design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
+                                              idT, Fun_Forms, Xbar = NULL, eps,
+                                              direction) {
+    data[] <- lapply(data, function (x) locf(locf(x), fromLast = TRUE))
+    desgn_matr <- function (time, terms, Xbar) {
+        D <- LongData_HazardModel(time, data, data[[timeVar]],
+                                  data[[idVar]], timeVar,
+                                  index = match(idT, unique(idT)))
+        mf <- lapply(terms, model.frame.default, data = D)
+        X <- mapply2(model.matrix.default, terms, mf)
+        if (!is.null(Xbar))
+            X <- mapply2(function (m, mu) m - rep(mu, each = nrow(m)), X, Xbar)
+        X
+    }
+    degn_matr_slp <- function (time, terms, Xbar, eps, direction) {
+        K <- length(terms)
+        out <- vector("list", K)
+        for (i in seq_len(K)) {
+            direction_i <- if (length(direction[[i]])) direction[[i]][[1L]] else "both"
+            eps_i <- if (length(eps[[i]])) eps[[i]][[1L]] else 0.001
+            if (direction_i == "both") {
+                if (is.list(time)) {
+                    t1 <- lapply(time, function (t) t + eps_i)
+                    t2 <- lapply(time, function (t) t - eps_i)
+                } else {
+                    t1 <- time + eps_i
+                    t2 <- time - eps_i
+                }
+            } else {
+                t1 <- time
+                if (is.list(time)) {
+                    t2 <- lapply(time, function (t) t - eps_i)
+                } else {
+                    t2 <- time - eps_i
+                }
+            }
+            e <- c(mapply("-", t1, t2))
+            terms_i <- terms[[i]]
+            D1 <- LongData_HazardModel(t1, data, data[[timeVar]],
+                                       data[[idVar]], timeVar,
+                                       match(idT, unique(idT)))
+            mf1 <- model.frame.default(terms_i, data = D1)
+            X1 <- model.matrix.default(terms_i, mf1)
+            D2 <- LongData_HazardModel(t2, data, data[[timeVar]],
+                                       data[[idVar]], timeVar,
+                                       match(idT, unique(idT)))
+            mf2 <- model.frame.default(terms_i, data = D2)
+            X2 <- model.matrix.default(terms_i, mf2)
+            if (!is.null(Xbar)) {
+                X1 <- X1 - rep(Xbar[[i]], each = nrow(X1))
+                X2 <- X2 - rep(Xbar[[i]], each = nrow(X2))
+            }
+            out[[i]] <- (X1 - X2) / e
+        }
+        out
+    }
+    degn_matr_area <- function (time, terms, Xbar) {
+        if (!is.list(time)) {
+            time <- if (is.matrix(time)) split(time, row(time))
+            else split(time, seq_along(time))
+        }
+        GK <- gaussKronrod(15L)
+        wk <- GK$wk
+        sk <- GK$sk
+        quadrature_points <- function (x) {
+            P <- unname(x / 2)
+            sk <- outer(P, sk + 1)
+            # we divide with x to obtain the area up to time t, divided by t
+            # to account for the length of the interval
+            list(P = c(t(outer(P / x, wk))), sk = sk)
+        }
+        qp <- lapply(time, quadrature_points)
+        ss <- lapply(qp, function (x) c(t(x[['sk']])))
+        Pwk <- unlist(lapply(qp, '[[', 'P'), use.names = FALSE)
+        M <- desgn_matr(ss, terms, Xbar)
+        M <- lapply(M, "*", Pwk)
+        sum_qp <- function (m) {
+            n <- nrow(m)
+            grp <- rep(seq_len(round(n / 15)), each = 15L)
+            rowsum(m, grp, reorder = FALSE)
+        }
+        lapply(M, sum_qp)
+    }
+    ################
+    out <- list("value" = desgn_matr(time, terms, Xbar),
+                "slope" = degn_matr_slp(time, terms, Xbar, eps, direction),
+                "area" = degn_matr_area(time, terms, Xbar))
+    out <- lapply(seq_along(Fun_Forms), function (i)
+        lapply(out[Fun_Forms[[i]]], "[[", i))
+    names(out) <- names(Fun_Forms)
+    out
+}
+
 
 ms_setup <- function (data, timevars, statusvars, transitionmat, id, covs = NULL) {
     # setup times matrix with NAs
@@ -1278,4 +1267,3 @@ create_sigma_list <- function (sigmas, ss_sigmas, idL) {
 }
 
 lng_unq <- function (x) length(unique(x))
-

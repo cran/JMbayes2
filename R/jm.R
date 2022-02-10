@@ -23,8 +23,9 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     control <- c(control, list(...))
     namC <- names(con)
     con[(namc <- names(control))] <- control
-    if (length(noNms <- namc[!namc %in% namC]) > 0)
+    if (length(noNms <- namc[!namc %in% namC]) > 0) {
         warning("unknown names in control: ", paste(noNms, collapse = ", "))
+    }
     if (con$n_burnin > con$n_iter) {
         stop("'n_burnin' cannot be larger than 'n_iter'.")
     }
@@ -172,8 +173,9 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     } else {
         dataS <- data_Surv
     }
-    if (inherits(dataS, "tbl_df") || inherits(dataS, "tbl"))
+    if (inherits(dataS, "tbl_df") || inherits(dataS, "tbl")) {
         dataS <- as.data.frame(dataS)
+    }
     # if the longitudinal outcomes are not in dataS, we set a random value for
     # them. This is needed for the calculation of the matrix of interaction terms
     # between the longitudinal outcomes and other variables.
@@ -256,7 +258,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         Time_right <- Time_stop
         trunc_Time <- Time_start # possible left truncation time
         Time_left <- rep(0.0, nrow(dataS))
-        con$GK_k <- 7L
+        if(!"GK_k" %in% namc) con$GK_k <- 7L
     } else if (type_censoring == "interval") {
         Time1 <-  unname(Surv_Response[, "time1"])
         Time2 <-  unname(Surv_Response[, "time2"])
@@ -339,7 +341,11 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
 
     # knots for the log baseline hazard function
     if (is.null(con$knots)) {
-        qs <- lapply(split(Time_right, strata), range)
+        qs <- if (recurrent == "gap") {
+            lapply(split(Time_right - trunc_Time, strata), range)
+        } else {
+            lapply(split(Time_right, strata), range)
+        }
         con$knots <- lapply(qs, function (x)
             knots(x[1L], x[2L], con$base_hazard_segments,
                   con$Bsplines_degree))
@@ -397,13 +403,13 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     # 'Time_right', we put "_H" to denote calculation at the 'Time_integration', and
     # "_H2" to denote calculation at the 'Time_integration2'.
     strata_H <- rep(strata, each = con$GK_k)
-    W0_H <- if (recurrent) {
+    W0_H <- if (recurrent == "gap") {
         create_W0(c(t(st - trunc_Time)), con$knots, con$Bsplines_degree + 1,
                   strata_H)
     } else {
         create_W0(c(t(st)), con$knots, con$Bsplines_degree + 1, strata_H)
     }
-    dataS_H <- SurvData_HazardModel(st, dataS, Time_start,
+    dataS_H <- SurvData_HazardModel(split(st, row(st)), dataS, Time_start,
                                     paste0(idT, "_", strata), time_var)
     mf <- model.frame.default(terms_Surv_noResp, data = dataS_H)
     W_H <- construct_Wmat(terms_Surv_noResp, mf)
@@ -424,13 +430,14 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                                             eps, direction)
     U_H <- lapply(functional_forms, construct_Umat, dataS = dataS_H)
     if (length(which_event)) {
-        W0_h <- if (recurrent) {
+        W0_h <- if (recurrent == "gap") {
             create_W0(Time_right - trunc_Time, con$knots,
                       con$Bsplines_degree + 1, strata)
         } else {
             create_W0(Time_right, con$knots, con$Bsplines_degree + 1, strata)
         }
-        dataS_h <- SurvData_HazardModel(Time_right, dataS, Time_start,
+        dataS_h <- SurvData_HazardModel(split(Time_right, seq_along(Time_right)),
+                                        dataS, Time_start,
                                         paste0(idT, "_", strata), time_var)
         mf <- model.frame.default(terms_Surv_noResp, data = dataS_h)
         W_h <- construct_Wmat(terms_Surv_noResp, mf)
@@ -453,10 +460,10 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     if (length(which_interval)) {
         W0_H2 <- create_W0(c(t(st2)), con$knots, con$Bsplines_degree + 1,
                            strata_H)
-        dataS_H2 <- SurvData_HazardModel(st2, dataS, Time_start,
+        dataS_H2 <- SurvData_HazardModel(split(st2, row(st2)), dataS, Time_start,
                                          paste0(idT, "_", strata), time_var)
         mf2 <- model.frame.default(terms_Surv_noResp, data = dataS_H2)
-        W_h <- construct_Wmat(terms_Surv_noResp, mf2)
+        W_H2 <- construct_Wmat(terms_Surv_noResp, mf2)
         if (!any_gammas) {
             W_H2 <- matrix(0.0, nrow = nrow(W_H2), ncol = 1L)
         }
@@ -468,7 +475,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                                                  dataL, time_var, idVar, idT,
                                                  collapsed_functional_forms, NULL,
                                                  eps, direction)
-        U_H <- lapply(functional_forms, construct_Umat, dataS = dataS_H2)
+        U_H2 <- lapply(functional_forms, construct_Umat, dataS = dataS_H2)
     } else {
         W0_H2 <- W_H2 <- matrix(0.0)
         X_H2 <- Z_H2 <- U_H2 <- rep(list(matrix(0.0)), length(respVars))
@@ -501,7 +508,9 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                  W0_h = W0_h, W_h = W_h, X_h = X_h, Z_h = Z_h, U_h = U_h,
                  W0_H2 = W0_H2, W_H2 = W_H2, X_H2 = X_H2, Z_H2 = Z_H2, U_H2 = U_H2,
                  log_Pwk = log_Pwk, log_Pwk2 = log_Pwk2,
-                 ind_RE = ind_RE, extra_parms = extra_parms)
+                 ind_RE = ind_RE, extra_parms = extra_parms,
+                 which_term_h = which(strata == max(strata)), 
+                 which_term_H = which(strata_H == max(strata)))
     ############################################################################
     ############################################################################
     # objects to export
@@ -522,7 +531,8 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         collapsed_functional_forms = collapsed_functional_forms,
         FunForms_cpp = lapply(FunForms_per_outcome, unlist),
         FunForms_ind = FunForms_ind(FunForms_per_outcome),
-        Funs_FunForms = Funs_FunForms, eps = eps, direction = direction
+        Funs_FunForms = lapply(Funs_FunForms, function (x) if (!is.list(x)) list(x) else x),
+        eps = eps, direction = direction, recurrent = !isFALSE(recurrent)
     )
     ############################################################################
     ############################################################################
@@ -545,10 +555,14 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         -coef(Surv_object) / Surv_object$scale
     if (is.null(gammas)) gammas <- 0.0
     alphas <- rep(0.0, sum(sapply(U_H, ncol)))
+    frailty <- rep(0.0, nT)
+    alphaF <- 0.0
+    sigmaF <- 0.1
     initial_values <- list(betas = betas, log_sigmas = log_sigmas,
                            sigmas = sigmas, D = D, b = b, bs_gammas = bs_gammas,
                            gammas = gammas, alphas = alphas,
-                           tau_bs_gammas = rep(20, n_strata))
+                           tau_bs_gammas = rep(20, n_strata),
+                           alphaF = alphaF, frailty = frailty, sigmaF = sigmaF)
     ############################################################################
     ############################################################################
     # Limits
@@ -599,7 +613,13 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                 D_L_etaLKJ = 3.0, gamma_prior_sigmas = TRUE,
                 sigmas_df = 3.0,
                 sigmas_sigmas = rep(5.0, length(log_sigmas)),
-                sigmas_shape = 5.0, sigmas_mean = exp(log_sigmas))
+                sigmas_shape = 5.0, sigmas_mean = exp(log_sigmas),
+                mean_alphaF = 0.0, Tau_alphaF = diag(1),
+                gamma_prior_sigmaF = TRUE,
+                sigmaF_df = 3.0,
+                sigmaF_sigmas = 5.0,
+                sigmaF_shape = 0.25/0.4,
+                sigmaF_mean = 0.25)
     if (is.null(priors) || !is.list(priors)) {
         priors <- prs
     } else {
