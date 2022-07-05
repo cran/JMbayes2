@@ -162,7 +162,12 @@ summary.jm <- function (object, ...) {
             row.names(out[[nam_outcome]])[k + 1] <- "sigma"
         }
     }
-    out$Survival <- do.call(rbind, list(tab_f("gammas"), tab_f("alphas")))
+    if(out$recurrent) {
+      out$Survival <- do.call(rbind, list(tab_f("gammas"), tab_f("alphas"),
+                                          tab_f("alphaF")))
+    } else {
+      out$Survival <- do.call(rbind, list(tab_f("gammas"), tab_f("alphas")))
+    }
     out$sigmaF <- tab_f("sigmaF")[c(1, 3, 4)]
     out$fit_stats <- object$fit_stats
     class(out) <- "summary.jm"
@@ -604,6 +609,7 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL,
     time_var <- object$model_info$var_names$time_var
     Time_var <- object$model_info$var_names$Time_var
     event_var <- object$model_info$var_names$event_var
+    type_censoring <- object$model_info$type_censoring
     respVars <- unlist(object$model_info$var_names$respVars)
     if (object$model_info$CR_MS && is.data.frame(newdata)) {
         stop("for competing risks and multi-state models, argument 'newdata' ",
@@ -612,8 +618,8 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL,
              "correct format.\n")
     }
     if (!is.data.frame(newdata)) {
-        if (!is.list(newdata) || length(newdata) != 2
-            || !names(newdata) %in% c("newdataL", "newdataE")) {
+        if (!is.list(newdata) || length(newdata) != 2 ||
+            !all(names(newdata) %in% c("newdataL", "newdataE"))) {
             stop("'newdata' must be a list with two data.frame elements ",
                  "named 'newdataL' and 'newdataE'.\n")
         }
@@ -639,10 +645,22 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL,
     }
     if (is.data.frame(newdata)) {
         if (is.null(newdata[[event_var]])) newdata[[event_var]] <- 0
-        if (is.null(newdata[[Time_var]])) {
-            last_time <- function (x) max(x, na.rm = TRUE)
-            f <- factor(newdata[[id_var]], unique(newdata[[id_var]]))
-            newdata[[Time_var]] <- ave(newdata[[time_var]], f, FUN = last_time)
+        if (length(Time_var) > 1L) {
+            if (is.null(newdata[[Time_var[1L]]])) {
+                newdata[[Time_var[1L]]] <- 0
+            }
+            if (is.null(newdata[[Time_var[2L]]])) {
+                last_time <- function (x) max(x, na.rm = TRUE) + 1e-06
+                f <- factor(newdata[[id_var]], unique(newdata[[id_var]]))
+                newdata[[Time_var[2L]]] <- ave(newdata[[time_var]], f,
+                                               FUN = last_time)
+            }
+        } else {
+            if (is.null(newdata[[Time_var]])) {
+                last_time <- function (x) max(x, na.rm = TRUE) + 1e-06
+                f <- factor(newdata[[id_var]], unique(newdata[[id_var]]))
+                newdata[[Time_var]] <- ave(newdata[[time_var]], f, FUN = last_time)
+            }
         }
         termsL <- object$model_info$terms$terms_FE_noResp
         all_vars <- unlist(lapply(termsL, all.vars), use.names = FALSE)
@@ -655,9 +673,9 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL,
         }
     }
     if (!is.null(newdata2) && !is.data.frame(newdata2)) {
-        if (!is.list(newdata2) || length(newdata2) != 2
-            || !names(newdata2) %in% c("newdataL", "newdataE")) {
-            stop("'newdata' must be a list with two data.frame elements ",
+        if (!is.list(newdata2) || length(newdata2) != 2 ||
+            !all(names(newdata2) %in% c("newdataL", "newdataE"))) {
+            stop("'newdata2' must be a list with two data.frame elements ",
                  "named 'newdataL' and 'newdataE'.\n")
         }
         for (i in seq_along(respVars)) {
@@ -682,10 +700,22 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL,
     }
     if (!is.null(newdata2) && is.data.frame(newdata2)) {
         if (is.null(newdata2[[event_var]])) newdata2[[event_var]] <- 0
-        if (is.null(newdata2[[Time_var]])) {
-            last_time <- function (x) max(x, na.rm = TRUE)
-            f <- factor(newdata2[[id_var]], unique(newdata2[[id_var]]))
-            newdata[[Time_var]] <- ave(newdata2[[time_var]], f, FUN = last_time)
+        if (length(Time_var) > 1L) {
+            if (is.null(newdata2[[Time_var[1L]]])) {
+                newdata2[[Time_var[1L]]] <- 0
+            }
+            if (is.null(newdata2[[Time_var[2L]]])) {
+                last_time <- function (x) max(x, na.rm = TRUE) + 1e-06
+                f <- factor(newdata2[[id_var]], unique(newdata2[[id_var]]))
+                newdata2[[Time_var[2L]]] <- ave(newdata2[[time_var]], f,
+                                               FUN = last_time)
+            }
+        } else {
+            if (is.null(newdata2[[Time_var]])) {
+                last_time <- function (x) max(x, na.rm = TRUE) + 1e-06
+                f <- factor(newdata2[[id_var]], unique(newdata2[[id_var]]))
+                newdata2[[Time_var]] <- ave(newdata2[[time_var]], f, FUN = last_time)
+            }
         }
         termsL <- object$model_info$terms$terms_FE_noResp
         all_vars <- unlist(lapply(termsL, all.vars), use.names = FALSE)
@@ -826,10 +856,15 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
         low <- f(pred_Long[[ind + 1]])
         upp <- f(pred_Long[[ind + 2]])
         times <- pred_Long[[time_var]]
-        ry <- range(preds, low, upp)
-        rx <- range(times)
+        na_preds <- is.na(preds)
+        preds <- preds[!na_preds]
+        low <- low[!na_preds]
+        upp <- upp[!na_preds]
+        times <- times[!na_preds]
+        ry <- range(preds, low, upp, na.rm = TRUE)
+        rx <- range(times, na.rm = TRUE)
         y_lim <- if (ylim_long_outcome_range) {
-            range(f(ranges[[outcome]]), ry)
+            range(f(ranges[[outcome]]), ry, na.rm = TRUE)
         } else {
             ry
         }
@@ -868,7 +903,7 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
         fill_CI_event <- rep(fill_CI_event, length.out = length(unq_strata))
         times <- pred_Event[[time_var]]
         ry <- sort(fun_event(c(0, 1)))
-        rx <- range(times)
+        rx <- range(times, na.rm = TRUE)
         plot(rx, ry, type = "n", xlab = "", ylab = "", xlim = xlim,
              axes = FALSE, col.axis = col_axis, col.lab = col_axis, ylim = ry)
         if (box) box(col = col_axis)
@@ -998,13 +1033,14 @@ rc_setup <- function(rc_data, trm_data,
   tail_rows <- cumsum(rle(rc_data[[rc_idVar]])$length)
   new_rows <- sort(c(seq_along(rc_data[[rc_idVar]]), tail_rows))
   dataOut <- rc_data[new_rows, , drop = FALSE]
-  dataOut[[nameStrata]] <- 1
+  dataOut[[nameStrata]] <- "Rec"
   tail_rows <- tail_rows + seq_along(tail_rows)
-  dataOut[[nameStrata]][tail_rows] <- 2
+  dataOut[[nameStrata]][tail_rows] <- "Ter"
   dataOut[[nameStrata]] <- as.factor(dataOut[[nameStrata]])
   dataOut[[rc_startVar]][tail_rows] <- 0
   dataOut[[rc_stopVar]][tail_rows]  <- trm_data[[trm_stopVar]]
   dataOut[[nameStatus]] <- dataOut[[rc_statusVar]]
   dataOut[[nameStatus]][tail_rows] <- trm_data[[trm_statusVar]]
+  rownames(dataOut) <- seq_len(nrow(dataOut))
   dataOut
 }

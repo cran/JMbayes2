@@ -13,12 +13,13 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     # - n_iter: the number of total iterations per chain
     # - seed: the seed used in the sampling procedures
     # - cores: the number of cores to use for running the chains in parallel
+    # - knots: the knots for the log baseline hazard B-spline approximation
     # - MALA: if TRUE, the MALA algorithm is used when update the elements of
     #         of the Cholesky factor of the D matrix
     con <- list(GK_k = 15L, Bsplines_degree = 2L, base_hazard_segments = 10,
                 diff = 2L, n_chains = 3L, n_burnin = 500L, n_iter = 3500L,
                 n_thin = 1L, seed = 123L, MALA = FALSE,
-                save_random_effects = FALSE,
+                save_random_effects = FALSE, knots = NULL,
                 cores = max(parallel::detectCores() - 1, 1))
     control <- c(control, list(...))
     namC <- names(con)
@@ -65,6 +66,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
              "in the database of the longitudinal models.")
     }
     dataL <- dataL[order(idL, dataL[[time_var]]), ]
+    idL <- dataL[[idVar]]
 
     # extract terms from mixed models
     terms_FE <- lapply(Mixed_objects, extract_terms, which = "fixed", data = dataL)
@@ -110,7 +112,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     unq_id <- unique(idL)
     idL <- mapply2(exclude_NAs, NAs_FE_dataL, NAs_RE_dataL,
                    MoreArgs = list(id = idL))
-    idL <- lapply(idL, match, table = unq_id)
+    idL[] <- lapply(idL, match, table = unq_id)
     # the index variable idL_lp is to be used to subset the random effects of each outcome
     # such that to calculate the Zb part of the model as rowSums(Z * b[idL_lp, ]). This
     # means that for outcomes that miss some subjects, we recode the id variable from 1
@@ -197,6 +199,9 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     Time_var <- head(av, -1L)
     event_var <- tail(av, 1L)
     # survival times
+    if (!is.null(NAs_surv <- attr(mf_surv_dataS, "na.action"))) {
+        dataS <- dataS[-NAs_surv, ]
+    }
     Surv_Response <- model.response(mf_surv_dataS)
     type_censoring <- attr(Surv_Response, "type")
     if (is.null(dataS[[idVar]])) {
@@ -209,10 +214,6 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         }
     } else {
         idT <- dataS[[idVar]]
-    }
-    if (!is.null(NAs_surv <- attr(mf_surv_dataS, "na.action"))) {
-        idT <- idT[-NAs_surv]
-        dataS <- dataS[-NAs_surv, ]
     }
     idT <- factor(idT, levels = unique(idT))
 
@@ -238,6 +239,8 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                 "We set internally the datasets in the same order, but it would be best ",
                 "that you do it beforehand on your own.")
         dataS <- dataS[order(idT), ]
+        idT <- dataS[[id_var]]
+        idT <- factor(idT, levels = unique(idT))
         mf_surv_dataS <- model.frame.default(terms_Surv, data = dataS)
         Surv_Response <- model.response(mf_surv_dataS)
     }
@@ -420,14 +423,17 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     attr <- lapply(functional_forms, extract_attributes, data = dataS_H)
     eps <- lapply(attr, "[[", 1L)
     direction <- lapply(attr, "[[", 2L)
+    zero_ind <- lapply(attr, "[[", 3L)
+    zero_ind_X <- lapply(zero_ind, function (x) if (length(x)) x[[1]][["X"]] else x)
+    zero_ind_Z <- lapply(zero_ind, function (x) if (length(x)) x[[1]][["Z"]] else x)
     X_H <- design_matrices_functional_forms(st, terms_FE_noResp,
                                             dataL, time_var, idVar, idT,
                                             collapsed_functional_forms, Xbar,
-                                            eps, direction)
+                                            eps, direction, zero_ind_X)
     Z_H <- design_matrices_functional_forms(st, terms_RE,
                                             dataL, time_var, idVar, idT,
                                             collapsed_functional_forms, NULL,
-                                            eps, direction)
+                                            eps, direction, zero_ind_Z)
     U_H <- lapply(functional_forms, construct_Umat, dataS = dataS_H)
     if (length(which_event)) {
         W0_h <- if (recurrent == "gap") {
@@ -447,11 +453,11 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         X_h <- design_matrices_functional_forms(Time_right, terms_FE_noResp,
                                                 dataL, time_var, idVar, idT,
                                                 collapsed_functional_forms, Xbar,
-                                                eps, direction)
+                                                eps, direction, zero_ind_X)
         Z_h <- design_matrices_functional_forms(Time_right, terms_RE,
                                                 dataL, time_var, idVar, idT,
                                                 collapsed_functional_forms, NULL,
-                                                eps, direction)
+                                                eps, direction, zero_ind_Z)
         U_h <- lapply(functional_forms, construct_Umat, dataS = dataS_h)
     } else {
         W0_h <- W_h <- matrix(0.0)
@@ -467,14 +473,14 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         if (!any_gammas) {
             W_H2 <- matrix(0.0, nrow = nrow(W_H2), ncol = 1L)
         }
-        X_H2 <- design_matrices_functional_forms(st, terms_FE_noResp,
+        X_H2 <- design_matrices_functional_forms(st2, terms_FE_noResp,
                                                  dataL, time_var, idVar, idT,
                                                  collapsed_functional_forms, Xbar,
-                                                 eps, direction)
-        Z_H2 <- design_matrices_functional_forms(st, terms_RE,
+                                                 eps, direction, zero_ind_X)
+        Z_H2 <- design_matrices_functional_forms(st2, terms_RE,
                                                  dataL, time_var, idVar, idT,
                                                  collapsed_functional_forms, NULL,
-                                                 eps, direction)
+                                                 eps, direction, zero_ind_Z)
         U_H2 <- lapply(functional_forms, construct_Umat, dataS = dataS_H2)
     } else {
         W0_H2 <- W_H2 <- matrix(0.0)
@@ -509,7 +515,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                  W0_H2 = W0_H2, W_H2 = W_H2, X_H2 = X_H2, Z_H2 = Z_H2, U_H2 = U_H2,
                  log_Pwk = log_Pwk, log_Pwk2 = log_Pwk2,
                  ind_RE = ind_RE, extra_parms = extra_parms,
-                 which_term_h = which(strata == max(strata)), 
+                 which_term_h = which(strata == max(strata)),
                  which_term_H = which(strata_H == max(strata)))
     ############################################################################
     ############################################################################
@@ -532,7 +538,8 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         FunForms_cpp = lapply(FunForms_per_outcome, unlist),
         FunForms_ind = FunForms_ind(FunForms_per_outcome),
         Funs_FunForms = lapply(Funs_FunForms, function (x) if (!is.list(x)) list(x) else x),
-        eps = eps, direction = direction, recurrent = !isFALSE(recurrent)
+        eps = eps, direction = direction, zero_ind_X = zero_ind_X,
+        zero_ind_Z = zero_ind_Z, recurrent = !isFALSE(recurrent)
     )
     ############################################################################
     ############################################################################
@@ -552,7 +559,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     b <- mapply2(extract_b, Mixed_objects, unq_idL, MoreArgs = list(n = nY))
     bs_gammas <- rep(-0.1, ncol(W0_H))
     gammas <- if (inherits(Surv_object, "coxph")) coef(Surv_object) else
-        -coef(Surv_object) / Surv_object$scale
+        -coef(Surv_object)[-1L] / Surv_object$scale
     if (is.null(gammas)) gammas <- 0.0
     alphas <- rep(0.0, sum(sapply(U_H, ncol)))
     frailty <- rep(0.0, nT)

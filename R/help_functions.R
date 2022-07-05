@@ -212,8 +212,10 @@ extract_attributes <- function (form, data) {
     mf <- model.frame(terms(form), data = data)
     eps <- lapply(mf, function (v, name) attr(v, name), name = "eps")
     direction <- lapply(mf, function (v, name) attr(v, name), name = "direction")
+    zero_ind <- lapply(mf, function (v, name) attr(v, name), name = "zero_ind")
     list(eps = eps[!sapply(eps, is.null)],
-         direction = direction[!sapply(direction, is.null)])
+         direction = direction[!sapply(direction, is.null)],
+         zero_ind = zero_ind[!sapply(zero_ind, is.null)])
 }
 
 extract_D <- function (object) {
@@ -226,9 +228,12 @@ extract_D <- function (object) {
 }
 
 knots <- function (xl, xr, ndx, deg) {
-    # From Paul Eilers
     dx <- (xr - xl) / ndx
-    seq(xl - deg * dx, xr + deg * dx, by = dx)
+    if (deg < 1) {
+        seq(0, xr + 0.001, length.out = ndx + 1)
+    } else {
+        seq(xl - deg * dx, xr + deg * dx, by = dx)
+    }
 }
 
 extract_b <- function (object, id, n) {
@@ -250,10 +255,16 @@ extract_log_sigmas <- function (object) {
     out
 }
 
-value <- area <- function (x) rep(1, NROW(x))
+area <- function (x) rep(1, NROW(x))
 vexpit <- Dexpit <- vexp <- Dexp <- function (x) rep(1, NROW(x))
 vsqrt <- vlog <- vlog2 <- vlog10 <- function (x) rep(1, NROW(x))
 poly2 <- poly3 <- poly4 <- function (x) rep(1, NROW(x))
+value <- function (x, zero_ind = NULL) {
+    out <- rep(1, NROW(x))
+    temp <- list(zero_ind = zero_ind)
+    attributes(out) <- c(attributes(out), temp)
+    out
+}
 slope <- function (x, eps = 0.001, direction = "both") {
     out <- rep(1, NROW(x))
     temp <- list(eps = eps, direction = direction)
@@ -939,9 +950,9 @@ LongData_HazardModel <- function (times_to_fill, data, times_data, ids,
 
 design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
                                               idT, Fun_Forms, Xbar = NULL, eps,
-                                              direction) {
+                                              direction, zero_ind = NULL) {
     data[] <- lapply(data, function (x) locf(locf(x), fromLast = TRUE))
-    desgn_matr <- function (time, terms, Xbar) {
+    desgn_matr <- function (time, terms, Xbar, zero_ind) {
         D <- LongData_HazardModel(time, data, data[[timeVar]],
                                   data[[idVar]], timeVar,
                                   index = match(idT, unique(idT)))
@@ -949,6 +960,15 @@ design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
         X <- mapply2(model.matrix.default, terms, mf)
         if (!is.null(Xbar))
             X <- mapply2(function (m, mu) m - rep(mu, each = nrow(m)), X, Xbar)
+        if (!is.null(zero_ind)) {
+            f <- function (m, ind) {
+                if (length(ind) > 0) {
+                    m[, ind] <- 0 * m[, ind]
+                }
+                m
+            }
+            X <- mapply2(f, X, zero_ind)
+        }
         X
     }
     degn_matr_slp <- function (time, terms, Xbar, eps, direction) {
@@ -973,7 +993,7 @@ design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
                     t2 <- time - eps_i
                 }
             }
-            e <- c(mapply("-", t1, t2))
+            e <- if (direction_i == "both") c(mapply("-", t1, t2)) else 1
             terms_i <- terms[[i]]
             D1 <- LongData_HazardModel(t1, data, data[[timeVar]],
                                        data[[idVar]], timeVar,
@@ -1011,7 +1031,7 @@ design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
         qp <- lapply(time, quadrature_points)
         ss <- lapply(qp, function (x) c(t(x[['sk']])))
         Pwk <- unlist(lapply(qp, '[[', 'P'), use.names = FALSE)
-        M <- desgn_matr(ss, terms, Xbar)
+        M <- desgn_matr(ss, terms, Xbar, zero_ind = NULL)
         M <- lapply(M, "*", Pwk)
         sum_qp <- function (m) {
             n <- nrow(m)
@@ -1021,7 +1041,7 @@ design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
         lapply(M, sum_qp)
     }
     ################
-    out <- list("value" = desgn_matr(time, terms, Xbar),
+    out <- list("value" = desgn_matr(time, terms, Xbar, zero_ind),
                 "slope" = degn_matr_slp(time, terms, Xbar, eps, direction),
                 "area" = degn_matr_area(time, terms, Xbar))
     out <- lapply(seq_along(Fun_Forms), function (i)
