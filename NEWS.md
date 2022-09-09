@@ -1,3 +1,16 @@
+# JMbayes2 0.3.0
+
+## Major
+* An issue resulting in wider than expected credible intervals for the fixed-effects coefficients of the longitudinal submodels has been resolved.
+
+## Minor
+* Several improvements in various internal functions.
+
+# JMbayes2 0.2.9
+
+## Major
+* The default placing of the knots for the B-spline approximation of the log baseline hazard has been changed. This will cause some difference compared to previous versions.
+
 # JMbayes2 0.2.0
 
 ## Major

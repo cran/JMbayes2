@@ -321,9 +321,9 @@ vec propose_rnorm_vec (const vec &thetas, const vec &scale) {
   return proposed_thetas;
 }
 
-vec propose_mvnorm_vec (const mat &U, const double &scale) {
-  uword ncols = U.n_cols;
-  vec res = scale * trans(rnorm_mat(1, ncols) * U);
+vec propose_mvnorm_vec (const mat &Sigma) {
+  mat U = chol(Sigma, "lower");
+  vec res = U * randn(U.n_cols);
   return res;
 }
 
@@ -402,7 +402,7 @@ vec log_dnbinom (const vec &x, const vec &mu, const double &size) {
   return out;
 }
 
-vec log_dnorm (const vec &x, const vec &mu, const double &sigma) {
+ vec log_dnorm (const vec &x, const vec &mu, const double &sigma) {
   vec sigmas(x.n_rows);
   sigmas.fill(sigma);
   vec out = log_normpdf(x, mu, sigmas);
@@ -732,7 +732,6 @@ vec docall_rbindF (const field<vec> &F) { // binds a field of vectors into one v
   return V;
 }
 
-// ?? The function below could be optimized to update in blocks, rather then element by element
 mat add_zero_colrows (const mat &M, // adds zero-rows and/or zero-cols to a matrix M
                       const uword &nrows, // n_rows in the target matrix
                       const uword &ncols, // n_cols in the target matrix

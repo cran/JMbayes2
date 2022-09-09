@@ -437,17 +437,17 @@ List mcmc_cpp (List model_data, List model_info, List initial_values,
                      any_interval,
                      n_burnin, it,
                      sigmaF, frailtyH_sigmaF_alphaF, frailtyh_sigmaF_alphaF);
-      
+
       update_sigmaF(sigmaF, logLik_surv,
                     res_sigmaF, scale_sigmaF, acceptance_sigmaF,
-                    gamma_prior_sigmaF, sigmaF_df, sigmaF_sigmas, sigmaF_shape, 
+                    gamma_prior_sigmaF, sigmaF_df, sigmaF_sigmas, sigmaF_shape,
                     sigmaF_mean, it, W0H_bs_gammas, W0h_bs_gammas, W0H2_bs_gammas,
-                    WH_gammas, Wh_gammas, WH2_gammas, WlongH_alphas, Wlongh_alphas, 
+                    WH_gammas, Wh_gammas, WH2_gammas, WlongH_alphas, Wlongh_alphas,
                     WlongH2_alphas, log_Pwk, log_Pwk2, id_H_fast, id_h_fast,
-                    which_event, which_right_event, which_left, any_interval, 
-                    which_interval, recurrent, frailty_H, frailty_h, alphaF_H, 
+                    which_event, which_right_event, which_left, any_interval,
+                    which_interval, recurrent, frailty_H, frailty_h, alphaF_H,
                     alphaF_h, frailtyH_sigmaF_alphaF, frailtyh_sigmaF_alphaF);
-      
+
       denominator_surv =
         sum(logLik_surv) +
         logPrior_surv(bs_gammas, gammas, alphas, mean_bs_gammas,
@@ -458,8 +458,8 @@ List mcmc_cpp (List model_data, List model_info, List initial_values,
                       tau_alphas, shrink_alphas,
                       recurrent, alphaF, mean_alphaF, Tau_alphaF, lambda_alphaF,
                       tau_alphaF, shrink_alphaF);
-      
-      if(any_terminal) {
+
+      if (any_terminal) {
         update_alphaF(bs_gammas, gammas, alphas,
                       W0H_bs_gammas, W0h_bs_gammas, W0H2_bs_gammas,
                       WH_gammas, Wh_gammas, WH2_gammas,
@@ -482,24 +482,22 @@ List mcmc_cpp (List model_data, List model_info, List initial_values,
                       mean_alphaF, Tau_alphaF,
                       lambda_alphaF, tau_alphaF,
                       shrink_alphaF,
-                      sigmaF, 
+                      sigmaF,
                       frailtyH_sigmaF_alphaF, frailtyh_sigmaF_alphaF);
       }
     }
-    
-    if (it > 99) {
 
-    update_D(L, sds, b_mat, upper_part,
+    if (it > 99) {
+        update_D(L, sds, b_mat, upper_part,
              D_sds_df, D_sds_sigma, D_sds_shape, D_sds_mean, gamma_prior_D_sds,
-             D_L_etaLKJ,
-             it, MALA, logLik_re, res_sds, res_L, scale_sds, scale_L,
+             D_L_etaLKJ, it, MALA, logLik_re, res_sds, res_L, scale_sds, scale_L,
              acceptance_sds, acceptance_L);
 
     ////////////////////////////////////////////////////////////////////////
 
-    update_b(b, b_mat, eta, logLik_long, logLik_surv, logLik_re,
-             Wlong_H, Wlong_h, Wlong_H2, WlongH_alphas, Wlongh_alphas, WlongH2_alphas,
-             scale_b, ind_RE,
+        update_b(b, b_mat, eta, logLik_long, logLik_surv, logLik_re,
+             Wlong_H, Wlong_h, Wlong_H2, WlongH_alphas, Wlongh_alphas,
+             WlongH2_alphas, scale_b, ind_RE,
              X_H, X_h, X_H2, Z_H, Z_h, Z_H2, U_H, U_h, U_H2,
              Wlong_bar, Wlong_sds, betas, alphas, id_H_, id_h,
              FunForms, Funs_FunForms, X, Z, idL, y, sigmas,
@@ -508,27 +506,16 @@ List mcmc_cpp (List model_data, List model_info, List initial_values,
              Wh_gammas, WH2_gammas, log_Pwk, log_Pwk2,
              id_H_fast, id_h_fast, which_event, which_right_event, which_left,
              which_interval, any_event, any_interval, ni_event,
-             L, sds, it, acceptance_b, res_b, res_b_last, save_random_effects,
-             n_burnin, n_iter, GK_k, cumsum_b, outprod_b,
+             L, sds, it, acceptance_b, n_burnin, GK_k,
              recurrent, frailtyH_sigmaF_alphaF, frailtyh_sigmaF_alphaF);
 
     ////////////////////////////////////////////////////////////////////
 
-    update_sigmas(sigmas, has_sigmas, y, eta, extra_parms, families, links,
-                  idL_lp_fast, gamma_prior_sigmas, sigmas_df, sigmas_sigmas,
-                  sigmas_shape, sigmas_mean, it, res_sigmas, scale_sigmas,
-                  acceptance_sigmas);
-
-    logLik_long = log_long(y, eta, sigmas, extra_parms, families, links,
-                           idL_lp_fast, unq_idL, n_b);
-
-    ////////////////////////////////////////////////////////////////////
-
-    update_betas(betas, res_betas, acceptance_betas, scale_betas, eta,
+        update_betas(betas, res_betas, acceptance_betas, scale_betas, eta,
                  logLik_long, logLik_surv, Wlong_H, Wlong_h, Wlong_H2,
                  WlongH_alphas, Wlongh_alphas, WlongH2_alphas,
                  Tau_mean_betas_HC, Tau_betas_HC, b_mat, L, sds, X_dot,
-                 ind_FE, ind_FE_HC, id_patt, ind_RE_patt, ind_FE_patt,
+                 ind_FE, ind_RE, ind_FE_HC, id_patt, ind_RE_patt, ind_FE_patt,
                  it, has_tilde_betas, X, Z, b, idL, y, sigmas,
                  extra_parms, families, links, idL_lp_fast, mean_betas_nHC,
                  Tau_betas_nHC, x_notin_z,
@@ -538,25 +525,39 @@ List mcmc_cpp (List model_data, List model_info, List initial_values,
                  W0H_bs_gammas, W0h_bs_gammas, W0H2_bs_gammas,
                  WH_gammas, Wh_gammas, WH2_gammas,
                  log_Pwk, log_Pwk2, id_H_fast, id_h_fast, which_event,
-                 which_right_event, which_left, which_interval, unq_idL, n_burnin,
-                 recurrent, frailtyH_sigmaF_alphaF, frailtyh_sigmaF_alphaF);
+                 which_right_event, which_left, which_interval, unq_idL, 
+                 n_burnin, recurrent, frailtyH_sigmaF_alphaF, 
+                 frailtyh_sigmaF_alphaF, save_random_effects, res_b, res_b_last, 
+                 cumsum_b, outprod_b, n_iter);
 
-    // update intercepts
-    for (uword j = 0; j < y.n_elem; ++j) {
-      res_betas.at(it, ind_FE.at(j).at(0)) -= as_scalar(Xbar.at(j) * betas.at(j));
+        // update intercepts
+        for (uword j = 0; j < y.n_elem; ++j) {
+            res_betas.at(it, ind_FE.at(j).at(0)) -= as_scalar(Xbar.at(j) * betas.at(j));
+        }
+
+        denominator_surv =
+            sum(logLik_surv) +
+            logPrior_surv(bs_gammas, gammas, alphas, mean_bs_gammas,
+                      Tau_bs_gammas, tau_bs_gammas,
+                      mean_gammas, Tau_gammas, lambda_gammas,
+                      tau_gammas, shrink_gammas,
+                      mean_alphas, Tau_alphas, lambda_alphas,
+                      tau_alphas, shrink_alphas,
+                      recurrent, alphaF, mean_alphaF, Tau_alphaF, lambda_alphaF,
+                      tau_alphaF, shrink_alphaF);
+
+
+        ////////////////////////////////////////////////////////////////////
+
+        update_sigmas(sigmas, has_sigmas, y, eta, extra_parms, families, links,
+                  idL_lp_fast, gamma_prior_sigmas, sigmas_df, sigmas_sigmas,
+                  sigmas_shape, sigmas_mean, it, res_sigmas, scale_sigmas,
+                  acceptance_sigmas);
+
+        logLik_long = log_long(y, eta, sigmas, extra_parms, families, links,
+                           idL_lp_fast, unq_idL, n_b);
     }
 
-    denominator_surv =
-      sum(logLik_surv) +
-      logPrior_surv(bs_gammas, gammas, alphas, mean_bs_gammas,
-                    Tau_bs_gammas, tau_bs_gammas,
-                    mean_gammas, Tau_gammas, lambda_gammas,
-                    tau_gammas, shrink_gammas,
-                    mean_alphas, Tau_alphas, lambda_alphas,
-                    tau_alphas, shrink_alphas,
-                    recurrent, alphaF, mean_alphaF, Tau_alphaF, lambda_alphaF,
-                    tau_alphaF, shrink_alphaF);
-    }
     ////////////////////////////////////////////////////////////////////
 
     res_logLik.row(it) = trans(logLik_long + logLik_surv + logLik_re);

@@ -81,6 +81,7 @@ jm_fit <- function (model_data, model_info, initial_values, priors, control) {
     tik <- proc.time()
     cores <- control$cores
     chains <- seq_len(n_chains)
+    cores <- min(cores, length(chains))
     mcmc_parallel <- function (chain, model_data, model_info, initial_values,
                                priors, control) {
       not_D <- !names(initial_values) %in% c("D")
@@ -88,7 +89,6 @@ jm_fit <- function (model_data, model_info, initial_values, priors, control) {
       mcmc_cpp(model_data, model_info, initial_values, priors, control)
     }
     if (cores > 1L) {
-        cores <- min(cores, length(chains))
         cl <- parallel::makeCluster(cores)
         parallel::clusterSetRNGStream(cl = cl, iseed = control$seed)
         out <- parallel::parLapply(cl, chains, mcmc_parallel,
@@ -214,8 +214,7 @@ jm_fit <- function (model_data, model_info, initial_values, priors, control) {
     )
     if (!is.null(mcmc_out$mcmc[["b"]])) {
         znams <- unlist(lapply(model_data$Z, colnames), use.names = FALSE)
-        l <- sapply(model_data$unq_idL, length)
-        dnames_b <- list(unlist(model_data$unq_idL[which.max(l)]), znams)
+        dnames_b <- list(unlist(seq_len(model_data$n)), znams)
         fix_b <- function (stats) {
             x <- stats$b
             dim(x) <- sapply(dnames_b, length)
