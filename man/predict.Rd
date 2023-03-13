@@ -1,6 +1,7 @@
 \name{Predictions}
 
 \alias{predict.jm}
+\alias{predict.jmList}
 \alias{plot.predict_jm}
 
 \title{
@@ -14,7 +15,7 @@ Predict method for object of class \code{"jm"}.
 \usage{
 
 \method{predict}{jm}(object, newdata = NULL, newdata2 = NULL, times = NULL,
-  process = c("longitudinal", "event"),
+  times_per_id = FALSE, process = c("longitudinal", "event"),
   type_pred = c("response", "link"),
   type = c("subject_specific", "mean_subject"),
   level = 0.95, return_newdata = FALSE, return_mcmc = FALSE,
@@ -32,14 +33,27 @@ Predict method for object of class \code{"jm"}.
   cex_ylab_long = 1, cex_ylab_event = 1, cex_main = 1, cex_axis = 1,
   col_axis = "black", pos_ylab_long = c(0.1, 2, 0.08), bg = "white",
   \dots)
+
+\method{predict}{jmList}(object, weights, newdata = NULL, newdata2 = NULL,
+ times = NULL, process = c("longitudinal", "event"),
+ type_pred = c("response", "link"),
+ type = c("subject_specific", "mean_subject"),
+ level = 0.95, return_newdata = FALSE,
+ return_mcmc = FALSE, n_samples = 200L, n_mcmc = 55L,
+ cores = max(parallel::detectCores() - 1, 1), \dots)
 }
 
 \arguments{
-\item{object}{an object inheriting from class \code{"jm"}.}
+\item{object}{an object inheriting from class \code{"jm"} or a list of \code{"jm"} objects.}
+
+\item{weights}{a numeric vector of model weights.}
 
 \item{newdata, newdata2}{data.frames.}
 
 \item{times}{a numeric vector of future times to calculate predictions.}
+
+\item{times_per_id}{logical; if \code{TRUE} the \code{times} argument is a vector of times equal to the number of
+subjects in \code{newdata}.}
 
 \item{process}{for which process to calculation predictions, for the longitudinal outcomes or the event times.}
 

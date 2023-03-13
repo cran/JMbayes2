@@ -1,8 +1,9 @@
 export(area, calibration_metrics, calibration_plot, cumuplot, coef, compare_jm,
        crisk_setup, rc_setup, densplot, family, fixef, gelman_diag,
        ggdensityplot, ggtraceplot, jm, model.frame, model.matrix, ranef, slope,
-       terms, traceplot, tv, tvAUC, tvBrier, tvROC, value, vexpit, Dexpit, vexp,
-       Dexp, vlog, vlog2, vlog10, vsqrt, poly2, poly3, poly4)
+       terms, traceplot, tv, tvAUC, tvBrier, tvEPCE, tvROC, value, vexpit,
+       Dexpit, vexp, Dexp, vlog, vlog2, vlog10, vsqrt, poly2, poly3, poly4,
+       velocity, acceleration, coefs, create_folds)
 
 import(Rcpp)
 importFrom("utils", "glob2rx", "tail", "head", "combn")
@@ -16,7 +17,7 @@ importFrom("parallel", "makeCluster", "stopCluster", "detectCores", "parLapply",
            "clusterSetRNGStream")
 importFrom("nlme", "fixef", "ranef", "pdMatrix")
 importFrom("GLMMadaptive", "effectPlotData")
-importFrom("survival", "coxph", "untangle.specials", "strata", "survfit")
+importFrom("survival", "coxph", "untangle.specials", "strata", "survfit", "Surv")
 importFrom("splines", "splineDesign")
 importFrom("coda", "as.mcmc.list", "as.mcmc", "traceplot", "densplot",
            "gelman.diag", "cumuplot")
@@ -58,7 +59,10 @@ S3method(tvROC, jm)
 S3method(print, tvROC)
 S3method(plot, tvROC)
 S3method(print, tvBrier)
+S3method(print, tvEPCE)
 S3method(predict, jm)
+S3method(predict, jmList)
+
 
 
 

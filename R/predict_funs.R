@@ -653,7 +653,8 @@ get_components_newdata <- function (object, newdata, n_samples, n_mcmc,
 }
 
 predict_Long <- function (object, components_newdata, newdata, newdata2, times,
-                          type, type_pred, level, return_newdata, return_mcmc) {
+                          times_per_id, type, type_pred, level, return_newdata,
+                          return_mcmc) {
     # Predictions for newdata
     newdataL <- if (!is.data.frame(newdata)) newdata[["newdataL"]] else newdata
     betas <- components_newdata$mcmc[["betas"]]
@@ -694,6 +695,9 @@ predict_Long <- function (object, components_newdata, newdata, newdata2, times,
         l <- c(preds, low, upp)
         l <- l[c(matrix(seq_along(l), ncol = length(preds), byrow = TRUE))]
         res1 <- cbind(newdataL, as.data.frame(do.call("cbind", l)))
+        if (return_mcmc) {
+            attr(res1, "mcmc") <- out
+        }
     }
     ############################################################################
     ############################################################################
@@ -712,8 +716,15 @@ predict_Long <- function (object, components_newdata, newdata, newdata2, times,
                  "subjects the last available time is\n\t larger than the ",
                  "maximum time to predict; redefine 'times' accordingly.")
         }
-        f <- function (lt, tt, tm) c(lt, sort(tt[tt > lt & tt <= tm]))
-        times <- lapply(last_times, f, tt = times, tm = t_max)
+        if (times_per_id) {
+            f <- function (lt, tt, tm) c(lt, min(tt, tm))
+            times <- mapply2(f, lt = last_times, tt = times,
+                             MoreArgs = list(tm = t_max))
+
+        } else {
+            f <- function (lt, tt, tm) c(lt, sort(tt[tt > lt & tt <= tm]))
+            times <- lapply(last_times, f, tt = times, tm = t_max)
+        }
         n_times <- sapply(times, length)
         newdata2 <- newdataL
         idVar <- object$model_info$var_names$idVar
@@ -772,6 +783,9 @@ predict_Long <- function (object, components_newdata, newdata, newdata2, times,
             l <- c(preds, low, upp)
             l <- l[c(matrix(seq_along(l), ncol = length(preds), byrow = TRUE))]
             res2 <- cbind(newdataL2, as.data.frame(do.call("cbind", l)))
+            if (return_mcmc) {
+                attr(res2, "mcmc") <- out
+            }
         }
     }
     out <- if (is.null(newdata2)) {
@@ -795,13 +809,16 @@ predict_Long <- function (object, components_newdata, newdata, newdata2, times,
 }
 
 predict_Event <- function (object, components_newdata, newdata, newdata2,
-                           times, level, return_newdata, return_mcmc) {
+                           times, times_per_id, level, return_newdata,
+                           return_mcmc) {
     # prepare the data for calculations
     newdataL <- if (!is.data.frame(newdata)) newdata[["newdataL"]] else newdata
     newdataE <- if (!is.data.frame(newdata)) newdata[["newdataE"]] else newdata
     if (!is.null(newdata2)) {
+        newdataL2 <- if (!is.data.frame(newdata2)) newdata2[["newdataL"]] else newdata2
         newdataE2 <- if (!is.data.frame(newdata2)) newdata2[["newdataE"]] else newdata2
     } else {
+        newdataL2 <- newdataL
         newdataE2 <- newdataE
     }
     CR_MS <- object$model_info$CR_MS
@@ -829,8 +846,15 @@ predict_Event <- function (object, components_newdata, newdata, newdata2,
                  "subjects the last available time is \nlarger than the ",
                  "maximum time to predict; redefine 'times' accordingly.")
         }
-        f <- function (lt, tt, tm) c(lt, sort(tt[tt > lt & tt <= tm]))
-        times <- lapply(last_times, f, tt = times, tm = t_max)
+        if (times_per_id) {
+            f <- function (lt, tt, tm) c(lt, min(tt, tm))
+            times <- mapply2(f, lt = last_times, tt = times,
+                             MoreArgs = list(tm = t_max))
+
+        } else {
+            f <- function (lt, tt, tm) c(lt, sort(tt[tt > lt & tt <= tm]))
+            times <- lapply(last_times, f, tt = times, tm = t_max)
+        }
     }
     n_times <- sapply(times, length)
 
@@ -934,6 +958,9 @@ predict_Event <- function (object, components_newdata, newdata, newdata2,
         newdataE2[["upp_CIF"]] <- res$upp
         newdataE2[["_strata"]] <- res[["_strata"]]
         res <- newdataE2
+        if (return_mcmc) {
+            attr(res, "mcmc") <- CIF
+        }
     }
     class(res) <- c("predict_jm", class(res))
     attr(res, "id_var") <- object$model_info$var_names$idVar

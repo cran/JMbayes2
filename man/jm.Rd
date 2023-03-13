@@ -3,6 +3,9 @@
 \alias{value}
 \alias{slope}
 \alias{area}
+\alias{velocity}
+\alias{acceleration}
+\alias{coefs}
 \alias{vexpit}
 \alias{Dexpit}
 \alias{vexp}
@@ -29,8 +32,11 @@ jm(Surv_object, Mixed_objects, time_var, recurrent = FALSE,
   functional_forms = NULL, data_Surv = NULL, id_var = NULL, priors = NULL,
   control = NULL, \dots)
 
-value(x, zero_ind = NULL)
+value(x)
+coefs(x, zero_ind = NULL)
 slope(x, eps = 0.001, direction = "both")
+velocity(x, eps = 0.001, direction = "both")
+acceleration(x)
 area(x)
 
 vexpit(x)
