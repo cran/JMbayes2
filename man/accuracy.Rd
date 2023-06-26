@@ -42,10 +42,14 @@ calibration_metrics(object, newdata, Tstart, Thoriz = NULL,
 
 tvBrier(object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
     integrated = FALSE, type_weights = c("model-based", "IPCW"),
-    cores = max(parallel::detectCores() - 1, 1), \dots)
+    model_weights = NULL, eventData_fun = NULL,
+    parallel = c("snow", "multicore"),
+    cores = parallelly::availableCores(omit = 1L), \dots)
 
 tvEPCE(object, newdata, Tstart, Thoriz = NULL, Dt = NULL, eps = 0.001,
-    cores = max(parallel::detectCores() - 1, 1), \dots)
+    model_weights = NULL, eventData_fun = NULL,
+    parallel = c("snow", "multicore"),
+    cores = parallelly::availableCores(omit = 1L), \dots)
 
 create_folds(data, V = 5, id_var = "id", seed = 123L)
 }
@@ -67,8 +71,15 @@ create_folds(data, V = 5, id_var = "id", seed = 123L)
 
 \item{eps}{numeric scalar used in the approximation of the hazard function.}
 
+\item{model_weights}{a numeric vector of weights to combine predictions when \code{object} is a list of joint models of class \code{"jmList"}.}
+
+\item{eventData_fun}{a function that takes as input the \code{newdata} and produces the dataset used for the event process model. This is useful when, for example, the event process model contains other time-varying covariates.
+It is important that this function does not alter the ordering of the subjects in \code{newdata}.}
+
+\item{parallel}{character string; what type of parallel computing to use.}
+
 \item{cores}{integer denoting the number of cores to be used when a library of joint models has been provided in
-    \code{object}.}
+    \code{object}. If \code{cores = 1}, no parallel computing is used.}
 
 \item{df_ns}{the degrees of freedom for the natural cubic spline of the cloglog transformation of the
 predicted probabilities used in the Cox model that assess calibration.}

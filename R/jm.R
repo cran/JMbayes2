@@ -12,6 +12,8 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     # - n_burnin: the number of burn-in iterations
     # - n_iter: the number of total iterations per chain
     # - seed: the seed used in the sampling procedures
+    # - parallel: what type of parallel computing to use, "snow" (default) or
+    #             "multicore"
     # - cores: the number of cores to use for running the chains in parallel;
     #          no point of setting this greater than n_chains
     # - knots: the knots for the log baseline hazard B-spline approximation
@@ -23,7 +25,8 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                 diff = 2L, n_chains = 3L, n_burnin = 500L, n_iter = 3500L,
                 n_thin = 1L, seed = 123L, MALA = FALSE,
                 save_random_effects = FALSE, knots = NULL,
-                cores = max(parallel::detectCores() - 1, 1))
+                parallel = "snow",
+                cores = parallelly::availableCores(omit = 1L))
     control <- c(control, list(...))
     namC <- names(con)
     con[(namc <- names(control))] <- control
@@ -429,14 +432,15 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     zero_ind <- lapply(attr, "[[", 3L)
     zero_ind_X <- lapply(zero_ind, function (x) if (length(x)) x[[1]][["X"]] else x)
     zero_ind_Z <- lapply(zero_ind, function (x) if (length(x)) x[[1]][["Z"]] else x)
+    time_window <- lapply(attr, "[[", 4L)
     X_H <- design_matrices_functional_forms(st, terms_FE_noResp,
                                             dataL, time_var, idVar, idT,
                                             collapsed_functional_forms, Xbar,
-                                            eps, direction, zero_ind_X)
+                                            eps, direction, zero_ind_X, time_window)
     Z_H <- design_matrices_functional_forms(st, terms_RE,
                                             dataL, time_var, idVar, idT,
                                             collapsed_functional_forms, NULL,
-                                            eps, direction, zero_ind_Z)
+                                            eps, direction, zero_ind_Z, time_window)
     U_H <- lapply(functional_forms, construct_Umat, dataS = dataS_H)
     if (length(which_event)) {
         W0_h <- if (recurrent == "gap") {
@@ -456,11 +460,11 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         X_h <- design_matrices_functional_forms(Time_right, terms_FE_noResp,
                                                 dataL, time_var, idVar, idT,
                                                 collapsed_functional_forms, Xbar,
-                                                eps, direction, zero_ind_X)
+                                                eps, direction, zero_ind_X, time_window)
         Z_h <- design_matrices_functional_forms(Time_right, terms_RE,
                                                 dataL, time_var, idVar, idT,
                                                 collapsed_functional_forms, NULL,
-                                                eps, direction, zero_ind_Z)
+                                                eps, direction, zero_ind_Z, time_window)
         U_h <- lapply(functional_forms, construct_Umat, dataS = dataS_h)
     } else {
         W0_h <- W_h <- matrix(0.0)
@@ -479,11 +483,11 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         X_H2 <- design_matrices_functional_forms(st2, terms_FE_noResp,
                                                  dataL, time_var, idVar, idT,
                                                  collapsed_functional_forms, Xbar,
-                                                 eps, direction, zero_ind_X)
+                                                 eps, direction, zero_ind_X, time_window)
         Z_H2 <- design_matrices_functional_forms(st2, terms_RE,
                                                  dataL, time_var, idVar, idT,
                                                  collapsed_functional_forms, NULL,
-                                                 eps, direction, zero_ind_Z)
+                                                 eps, direction, zero_ind_Z, time_window)
         U_H2 <- lapply(functional_forms, construct_Umat, dataS = dataS_H2)
     } else {
         W0_H2 <- W_H2 <- matrix(0.0)
@@ -518,8 +522,8 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                  W0_H2 = W0_H2, W_H2 = W_H2, X_H2 = X_H2, Z_H2 = Z_H2, U_H2 = U_H2,
                  log_Pwk = log_Pwk, log_Pwk2 = log_Pwk2,
                  ind_RE = ind_RE, extra_parms = extra_parms,
-                 which_term_h = which(strata == max(strata)),
-                 which_term_H = which(strata_H == max(strata)))
+                 which_term_h = lapply(seq_len(n_strata)[-1], function(x) which(x == strata)),
+                 which_term_H = lapply(seq_len(n_strata)[-1], function(x) which(x == strata_H)))
     ############################################################################
     ############################################################################
     # objects to export
@@ -542,7 +546,8 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         FunForms_ind = FunForms_ind(FunForms_per_outcome),
         Funs_FunForms = lapply(Funs_FunForms, function (x) if (!is.list(x)) list(x) else x),
         eps = eps, direction = direction, zero_ind_X = zero_ind_X,
-        zero_ind_Z = zero_ind_Z, recurrent = !isFALSE(recurrent),
+        zero_ind_Z = zero_ind_Z, time_window = time_window,
+        recurrent = !isFALSE(recurrent),
         ind_RE_patt = ind_RE_patt, ind_FE_patt = ind_FE_patt,
         id_patt = id_patt
     )
@@ -568,7 +573,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     if (is.null(gammas)) gammas <- 0.0
     alphas <- rep(0.0, sum(sapply(U_H, ncol)))
     frailty <- rep(0.0, nT)
-    alphaF <- 0.0
+    alphaF <- rep(0.0, max(n_strata - 1, 1))
     sigmaF <- 0.1
     initial_values <- list(betas = betas, log_sigmas = log_sigmas,
                            sigmas = sigmas, D = D, b = b, bs_gammas = bs_gammas,
@@ -626,7 +631,8 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                 sigmas_df = 3.0,
                 sigmas_sigmas = rep(5.0, length(log_sigmas)),
                 sigmas_shape = 5.0, sigmas_mean = exp(log_sigmas),
-                mean_alphaF = 0.0, Tau_alphaF = diag(1),
+                mean_alphaF = lapply(alphaF, "*", 0.0),
+                Tau_alphaF = rep(list(diag(0.25, 1)), length(alphaF)),
                 gamma_prior_sigmaF = TRUE,
                 sigmaF_df = 3.0,
                 sigmaF_sigmas = 5.0,

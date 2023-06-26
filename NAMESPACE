@@ -2,7 +2,7 @@ export(area, calibration_metrics, calibration_plot, cumuplot, coef, compare_jm,
        crisk_setup, rc_setup, densplot, family, fixef, gelman_diag,
        ggdensityplot, ggtraceplot, jm, model.frame, model.matrix, ranef, slope,
        terms, traceplot, tv, tvAUC, tvBrier, tvEPCE, tvROC, value, vexpit,
-       Dexpit, vexp, Dexp, vlog, vlog2, vlog10, vsqrt, poly2, poly3, poly4,
+       Dexpit, vexp, vabs, Dexp, vlog, vlog2, vlog10, vsqrt, poly2, poly3, poly4,
        velocity, acceleration, coefs, create_folds)
 
 import(Rcpp)
@@ -14,7 +14,8 @@ importFrom("stats", "coef", "terms", "model.frame", "model.frame.default",
            "gaussian", ".getXlevels", "makepredictcall", "plogis",
            "reformulate", "predict", "pnorm", "ave", "median", "density")
 importFrom("parallel", "makeCluster", "stopCluster", "detectCores", "parLapply",
-           "clusterSetRNGStream")
+           "clusterSetRNGStream", "makePSOCKcluster", "mclapply")
+importFrom("parallelly", "availableCores")
 importFrom("nlme", "fixef", "ranef", "pdMatrix")
 importFrom("GLMMadaptive", "effectPlotData")
 importFrom("survival", "coxph", "untangle.specials", "strata", "survfit", "Surv")
