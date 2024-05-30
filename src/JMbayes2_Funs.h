@@ -844,4 +844,36 @@ vec scalar2vec (const double &x) {
   return v;
 }
 
+arma::uvec std_setdiff(arma::uvec& x, arma::uvec& y) {
+    std::vector<int> a = arma::conv_to< std::vector<int> >::from(arma::sort(x));
+    std::vector<int> b = arma::conv_to< std::vector<int> >::from(arma::sort(y));
+    std::vector<int> out;
+    std::set_difference(a.begin(), a.end(), b.begin(), b.end(),
+                        std::inserter(out, out.end()));
+    return arma::conv_to<arma::uvec>::from(out);
+}
+
+double logSumExp (const vec &x) {
+    double maxval = max(x);
+    double out = maxval + log(sum(exp(x - maxval)));
+    return out;
+}
+
+vec lse (const vec &xx, const uvec &id_h2, const uvec & intgr_ind) {
+    uvec unq_idh2 = unique(id_h2);
+    uword n = unq_idh2.n_rows;
+    vec out(n);
+    for (uword i = 0; i < n; ++i) {
+        uvec idx = find(id_h2 == i);
+        uvec intgr_i = intgr_ind(idx);
+        uword nn = intgr_i.n_rows;
+        if (nn > 0) {
+            out(i) = logSumExp(xx(idx));
+        } else {
+            out(i) = sum(xx(idx));
+        }
+    }
+    return out;
+}
+
 #endif

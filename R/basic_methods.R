@@ -595,25 +595,59 @@ crisk_setup <- function (data, statusVar, censLevel, nameStrata = "strata",
     dataOut
 }
 
-predict.jm <- function (object, newdata = NULL, newdata2 = NULL,
-                        times = NULL, times_per_id = FALSE,
+predict.jm <- function (object, newdata = NULL, newdata2 = NULL, times = NULL,
                         process = c("longitudinal", "event"),
                         type_pred = c("response", "link"),
                         type = c("subject_specific", "mean_subject"),
-                        level = 0.95, return_newdata = FALSE,
-                        return_mcmc = FALSE, n_samples = 200L, n_mcmc = 55L,
-                        parallel = c("snow", "multicore"),
-                        cores = NULL, seed = 123L, ...) {
+                        control = NULL, ...) {
     process <- match.arg(process)
     type_pred <- match.arg(type_pred)
     type <- match.arg(type)
-    parallel <- match.arg(parallel)
+    con <- list(all_times = FALSE, times_per_id = FALSE, level = 0.95,
+                return_newdata = FALSE, use_Y = TRUE, return_mcmc = FALSE,
+                n_samples = 200L, n_mcmc = 55L, parallel = "snow",
+                cores = NULL, seed = 123L)
+    control <- c(control, list(...))
+    namC <- names(con)
+    con[(namc <- names(control))] <- control
+    if (length(noNms <- namc[!namc %in% namC]) > 0) {
+        warning("unknown names in control: ", paste(noNms, collapse = ", "))
+    }
     id_var <- object$model_info$var_names$idVar
     time_var <- object$model_info$var_names$time_var
     Time_var <- object$model_info$var_names$Time_var
     event_var <- object$model_info$var_names$event_var
     type_censoring <- object$model_info$type_censoring
     respVars <- unlist(object$model_info$var_names$respVars)
+    check_varNames <- function (object, newdata, id_var,
+                                process = c("Event", "Longitudinal")) {
+        process <- match.arg(process)
+        name_data <- deparse(substitute(newdata))
+        if (process == "Event") {
+            vars_S <- c(all.vars(object$model_info$terms$terms_Surv), id_var)
+            missing_vars <- vars_S[!vars_S %in% names(newdata)]
+            if (length(missing_vars)) {
+                stop("the data.frame '", name_data, "' should contain the ",
+                     "variable(s): ", paste(missing_vars, collapse = ", "),
+                     ". \nThe '", paste(Time_var, collapse = ", "),
+                     "' variable(s) should denote the last time the subjects",
+                     " were event-free, and\nthe '", event_var,
+                     "' variable should be set to 0.\n")
+            }
+        } else {
+            termsL <- object$model_info$terms$terms_FE
+            vars_L <- c(unlist(lapply(termsL, all.vars), use.names = FALSE), id_var)
+            missing_vars <- vars_L[!vars_L %in% names(newdata)]
+            if (length(missing_vars)) {
+                stop("the data.frame '", name_data, "' should contain the ",
+                     "variable(s): ", paste(missing_vars, collapse = ", "),
+                     "\nFor the 'newdata2' or 'newdata2$newdataL', you will also ",
+                     "need to provide the longitudinal\noutcome variables by ",
+                     "setting them to a random value (these values are not used in ",
+                     "the computations).\n")
+            }
+        }
+    }
     if (object$model_info$CR_MS && is.data.frame(newdata)) {
         stop("for competing risks and multi-state models, argument 'newdata' ",
              "must be a list of two data.frames, one for the longitudinal ",
@@ -626,54 +660,18 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL,
             stop("'newdata' must be a list with two data.frame elements ",
                  "named 'newdataL' and 'newdataE'.\n")
         }
-        for (i in seq_along(respVars)) {
-            v <- respVars[i]
-            if (is.null(newdata$newdataE[[v]])) {
-                newdata$newdataE[[v]] <- rep(0.1, nrow(newdata$newdataE))
-            }
-        }
-        termsL <- object$model_info$terms$terms_FE_noResp
-        all_vars <- unlist(lapply(termsL, all.vars), use.names = FALSE)
-        all_vars <- all_vars[!all_vars %in% time_var]
-        missing_vars <- all_vars[!all_vars %in% names(newdata$newdataE)]
-        if (length(missing_vars)) {
-            stop("the data.frame 'newdata$newdataE' should contain the ",
-                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
-        }
-        missing_vars <- all_vars[!all_vars %in% names(newdata$newdataL)]
-        if (length(missing_vars)) {
-            stop("the data.frame 'newdata$newdataL' should contain the ",
-                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
+        check_varNames(object, newdata$newdataE, id_var, "E")
+        check_varNames(object, newdata$newdataL, id_var, "L")
+        unq_ids_L <- newdata$newdataL[[id_var]]
+        unq_ids_E <- newdata$newdataE[[id_var]]
+        if (!all(unq_ids_L %in% unq_ids_E) || !all(unq_ids_E %in% unq_ids_L)) {
+            stop("the subject id's in the datasets 'newdata$newdataL' and ",
+                 "'newdata$newdataE' do not match.\n")
         }
     }
     if (is.data.frame(newdata)) {
-        if (is.null(newdata[[event_var]])) newdata[[event_var]] <- 0
-        if (length(Time_var) > 1L) {
-            if (is.null(newdata[[Time_var[1L]]])) {
-                newdata[[Time_var[1L]]] <- 0
-            }
-            if (is.null(newdata[[Time_var[2L]]])) {
-                last_time <- function (x) max(x, na.rm = TRUE) + 1e-06
-                f <- factor(newdata[[id_var]], unique(newdata[[id_var]]))
-                newdata[[Time_var[2L]]] <- ave(newdata[[time_var]], f,
-                                               FUN = last_time)
-            }
-        } else {
-            if (is.null(newdata[[Time_var]])) {
-                last_time <- function (x) max(x, na.rm = TRUE) + 1e-06
-                f <- factor(newdata[[id_var]], unique(newdata[[id_var]]))
-                newdata[[Time_var]] <- ave(newdata[[time_var]], f, FUN = last_time)
-            }
-        }
-        termsL <- object$model_info$terms$terms_FE_noResp
-        all_vars <- unlist(lapply(termsL, all.vars), use.names = FALSE)
-        all_vars <- all_vars[!all_vars %in% time_var]
-        all_vars <- c(all_vars, all.vars(object$model_info$terms$terms_Surv_noResp))
-        missing_vars <- all_vars[!all_vars %in% names(newdata)]
-        if (length(missing_vars)) {
-            stop("the data.frame 'newdata' should contain the ",
-                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
-        }
+        check_varNames(object, newdata, id_var, "E")
+        check_varNames(object, newdata, id_var, "L")
     }
     if (!is.null(newdata2) && !is.data.frame(newdata2)) {
         if (!is.list(newdata2) || length(newdata2) != 2 ||
@@ -681,69 +679,36 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL,
             stop("'newdata2' must be a list with two data.frame elements ",
                  "named 'newdataL' and 'newdataE'.\n")
         }
-        for (i in seq_along(respVars)) {
-            v <- respVars[i]
-            if (is.null(newdata2$newdataE[[v]])) {
-                newdata2$newdataE[[v]] <- rep(0.1, nrow(newdata2$newdataE))
-            }
-        }
-        termsL <- object$model_info$terms$terms_FE_noResp
-        all_vars <- unlist(lapply(termsL, all.vars), use.names = FALSE)
-        all_vars <- all_vars[!all_vars %in% time_var]
-        missing_vars <- all_vars[!all_vars %in% names(newdata2$newdataE)]
-        if (length(missing_vars)) {
-            stop("the data.frame 'newdata2$newdataE' should contain the ",
-                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
-        }
-        missing_vars <- all_vars[!all_vars %in% names(newdata2$newdataL)]
-        if (length(missing_vars)) {
-            stop("the data.frame 'newdata2$newdataL' should contain the ",
-                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
+        check_varNames(object, newdata2$newdataE, id_var, "E")
+        check_varNames(object, newdata2$newdataL, id_var, "L")
+        unq_ids_L <- newdata2$newdataL[[id_var]]
+        unq_ids_E <- newdata2$newdataE[[id_var]]
+        if (!all(unq_ids_L %in% unq_ids_E) || !all(unq_ids_E %in% unq_ids_L)) {
+            stop("the subject id's in the datasets 'newdata2$newdataL' and ",
+                 "'newdata2$newdataE' do not match.\n")
         }
     }
     if (!is.null(newdata2) && is.data.frame(newdata2)) {
-        if (is.null(newdata2[[event_var]])) newdata2[[event_var]] <- 0
-        if (length(Time_var) > 1L) {
-            if (is.null(newdata2[[Time_var[1L]]])) {
-                newdata2[[Time_var[1L]]] <- 0
-            }
-            if (is.null(newdata2[[Time_var[2L]]])) {
-                last_time <- function (x) max(x, na.rm = TRUE) + 1e-06
-                f <- factor(newdata2[[id_var]], unique(newdata2[[id_var]]))
-                newdata2[[Time_var[2L]]] <- ave(newdata2[[time_var]], f,
-                                               FUN = last_time)
-            }
-        } else {
-            if (is.null(newdata2[[Time_var]])) {
-                last_time <- function (x) max(x, na.rm = TRUE) + 1e-06
-                f <- factor(newdata2[[id_var]], unique(newdata2[[id_var]]))
-                newdata2[[Time_var]] <- ave(newdata2[[time_var]], f, FUN = last_time)
-            }
-        }
-        termsL <- object$model_info$terms$terms_FE_noResp
-        all_vars <- unlist(lapply(termsL, all.vars), use.names = FALSE)
-        all_vars <- all_vars[!all_vars %in% time_var]
-        all_vars <- c(all_vars, all.vars(object$model_info$terms$terms_Surv_noResp))
-        missing_vars <- all_vars[!all_vars %in% names(newdata2)]
-        if (length(missing_vars)) {
-            stop("the data.frame 'newdata2' should contain the ",
-                 "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
-        }
+        check_varNames(object, newdata2, id_var, "E")
+        check_varNames(object, newdata2, id_var, "L")
     }
-    if (is.null(cores)) {
+    if (is.null(con$cores)) {
         n <- if (!is.data.frame(newdata)) length(unique(newdata$newdataL[[id_var]]))
         else length(unique(newdata[[id_var]]))
-        cores <- if (n > 20) 4L else 1L
+        con$cores <- if (n > 20) 4L else 1L
     }
-    components_newdata <- get_components_newdata(object, newdata, n_samples,
-                                                 n_mcmc, parallel, cores, seed)
+    components_newdata <-
+        get_components_newdata(object, newdata, con$n_samples,
+                               con$n_mcmc, con$parallel, con$cores, con$seed,
+                               con$use_Y)
     if (process == "longitudinal") {
         predict_Long(object, components_newdata, newdata, newdata2, times,
-                     times_per_id, type, type_pred, level, return_newdata,
-                     return_mcmc)
+                     con$all_times, con$times_per_id, type, type_pred, con$level,
+                     con$return_newdata, con$return_mcmc)
     } else {
         predict_Event(object, components_newdata, newdata, newdata2, times,
-                      times_per_id, level, return_newdata, return_mcmc)
+                      con$times_per_id, con$level, con$return_newdata,
+                      con$return_mcmc)
     }
 }
 
@@ -773,6 +738,7 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
     }
     id_var <- attr(x, "id_var")
     time_var <- attr(x, "time_var")
+    Time_var <- attr(x, "Time_var")
     resp_vars <- attr(x, "resp_vars")
     ranges <- attr(x, "ranges")
     last_times <- attr(x, "last_times")
@@ -850,7 +816,7 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
     }
     xlim <- NULL
     if (!is.null(pred_Long)) xlim <- range(xlim, pred_Long[[time_var]])
-    if (!is.null(pred_Event)) xlim <- range(xlim, pred_Event[[time_var]])
+    if (!is.null(pred_Event)) xlim <- range(xlim, pred_Event[[Time_var]])
     plot_long_i <- function (outcome, add_xlab = FALSE, box = TRUE,
                              cex_axis = cex_axis) {
         ind <- pos_outcomes[outcome]
@@ -906,7 +872,7 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
         unq_strata <- sort(unique(strata))
         col_line_event <- rep(col_line_event, length.out = length(unq_strata))
         fill_CI_event <- rep(fill_CI_event, length.out = length(unq_strata))
-        times <- pred_Event[[time_var]]
+        times <- pred_Event[[Time_var]]
         ry <- sort(fun_event(c(0, 1)))
         rx <- range(times, na.rm = TRUE)
         plot(rx, ry, type = "n", xlab = "", ylab = "", xlim = xlim,
@@ -1009,61 +975,73 @@ plot.predict_jm <- function (x, x2 = NULL, subject = 1, outcomes = 1,
 }
 
 rc_setup <- function(rc_data, trm_data,
-                     rc_idVar = "id", rc_statusVar = "status",
-                     rc_startVar = "start", rc_stopVar = "stop",
-                     trm_idVar = "id", trm_statusVar = "status",
-                     trm_stopVar = "stop",
+                     idVar = "id", statusVar = "status",
+                     startVar = "start", stopVar = "stop",
+                     trm_censLevel,
                      nameStrata = "strata", nameStatus = "status") {
   # warnings
-  if(!setequal(rc_data[[rc_idVar]],  trm_data[[trm_idVar]])) {
-    stop("The groups/subjects in both datasets do not seem to match.")
-  }
-  if(any(rc_data[[rc_startVar]]>rc_data[[rc_stopVar]])) {
-    stop(paste0("'", rc_stopVar, "' cannot be smaller than '", rc_startVar,".'"))
-  }
-  rc_bol <- c(rc_idVar, rc_statusVar, rc_startVar, rc_stopVar) %in% names(rc_data)
+  rc_bol <- c(idVar, statusVar, startVar, stopVar) %in% names(rc_data)
   if(any(!rc_bol)) {
-    stop(paste0("\nThe variable '", c(rc_idVar, rc_statusVar, rc_startVar, rc_stopVar)[!rc_bol],
+    stop(paste0("\nThe variable '", c(idVar, statusVar, startVar, stopVar)[!rc_bol],
                 "' is not present in 'rc_data' dataset."))
   }
-  trm_bol <- c(trm_idVar, trm_statusVar, trm_stopVar) %in% names(trm_data)
+  trm_bol <- c(idVar, statusVar, stopVar) %in% names(trm_data)
   if(any(!trm_bol)) {
-    stop(paste0("\nThe variable '", c(trm_idVar, trm_statusVar, trm_stopVar)[!trm_bol],
+    stop(paste0("\nThe variable '", c(idVar, statusVar, stopVar)[!trm_bol],
                 "' is not present in 'trm_data' dataset."))
   }
-  # sort datasets by id (& start time)
-  rc_data <- rc_data[order(rc_data[[rc_idVar]], rc_data[[rc_startVar]]), ]
-  trm_data <- trm_data[order(trm_data[[trm_idVar]]), ]
+  if(!setequal(rc_data[[idVar]],  trm_data[[idVar]])) {
+    stop("The groups/subjects in both datasets do not seem to match.")
+  }
+  if(any(rc_data[[startVar]] > rc_data[[stopVar]])) {
+    stop(paste0("'", stopVar, "' cannot be smaller than '", startVar," in the recurring event data.'"))
+  }
+  rc_data <- rc_data[order(rc_data[[idVar]], rc_data[[startVar]]), ]
+  trm_data <- trm_data[order(trm_data[[idVar]]), ]
+  if(any(rc_data[[stopVar]] > trm_data[[stopVar]][rc_data[[idVar]]])) {
+    stop(paste0("'", stopVar, "' in the recurring event data cannot be larger than '", stopVar," in the terminal event data.'"))
+  }
   # create new dataset
-  tail_rows <- cumsum(rle(rc_data[[rc_idVar]])$length)
-  new_rows <- sort(c(seq_along(rc_data[[rc_idVar]]), tail_rows))
-  dataOut <- rc_data[new_rows, , drop = FALSE]
-  dataOut[[nameStrata]] <- "Rec"
-  tail_rows <- tail_rows + seq_along(tail_rows)
-  dataOut[[nameStrata]][tail_rows] <- "Ter"
-  dataOut[[nameStrata]] <- as.factor(dataOut[[nameStrata]])
-  dataOut[[rc_startVar]][tail_rows] <- 0
-  dataOut[[rc_stopVar]][tail_rows]  <- trm_data[[trm_stopVar]]
-  dataOut[[nameStatus]] <- dataOut[[rc_statusVar]]
-  dataOut[[nameStatus]][tail_rows] <- trm_data[[trm_statusVar]]
+  ## CR dataset
+  n <- nrow(trm_data)
+  unqLevs <- unique(trm_data[[statusVar]])
+  unqLevs <- unqLevs[unqLevs != trm_censLevel]
+  status <- trm_data[[statusVar]] != trm_censLevel
+  dataOut1 <- trm_data[rep(seq_len(n), each = length(unqLevs)), , drop = FALSE]
+  dataOut1[[nameStrata]] <- rep(unqLevs, times = n)
+  dataOut1[[nameStatus]] <- as.numeric(dataOut1[[statusVar]] == dataOut1[[nameStrata]])
+  dataOut1[[startVar]] <- 0
+  dataOut1[[nameStrata]] <- paste0("T", dataOut1[[nameStrata]])
+  ## Rec dataset
+  dataOut2 <- rc_data
+  dataOut2[[nameStrata]] <- "R"
+  dataOut2[[nameStatus]] <- dataOut2[[statusVar]]
+  ## combine the 2 datasets
+  dataOut <- rbind(dataOut1, dataOut2)
+  dataOut[[nameStrata]] <- as.factor(dataOut[[nameStrata]]) # automatically assigns "R" as reference level based on the alphabetical order of the levels
+  dataOut <- dataOut[order(dataOut[[idVar]], dataOut[[nameStrata]], dataOut[[startVar]]), ]
   rownames(dataOut) <- seq_len(nrow(dataOut))
   dataOut
 }
 
-
 predict.jmList <- function (object, weights, newdata = NULL, newdata2 = NULL,
-                        times = NULL, times_per_id = FALSE,
-                        process = c("longitudinal", "event"),
+                        times = NULL, process = c("longitudinal", "event"),
                         type_pred = c("response", "link"),
                         type = c("subject_specific", "mean_subject"),
-                        level = 0.95, return_newdata = FALSE,
-                        return_mcmc = FALSE, n_samples = 200L, n_mcmc = 55L,
-                        parallel = c("snow", "multicore"),
-                        cores = parallelly::availableCores(omit = 1L), ...) {
+                        control = NULL, ...) {
     process <- match.arg(process)
     type_pred <- match.arg(type_pred)
     type <- match.arg(type)
-    parallel <- match.arg(parallel)
+    con <- list(all_times = FALSE, times_per_id = FALSE, level = 0.95,
+                return_newdata = FALSE, use_Y = TRUE, return_mcmc = FALSE,
+                n_samples = 200L, n_mcmc = 55L, parallel = "snow",
+                cores = parallelly::availableCores(omit = 1L), seed = 123L)
+    control <- c(control, list(...))
+    namC <- names(con)
+    con[(namc <- names(control))] <- control
+    if (length(noNms <- namc[!namc %in% namC]) > 0) {
+        warning("unknown names in control: ", paste(noNms, collapse = ", "))
+    }
     obj <- object[[1L]]
     id_var <- obj$model_info$var_names$idVar
     time_var <- obj$model_info$var_names$time_var
@@ -1187,12 +1165,12 @@ predict.jmList <- function (object, weights, newdata = NULL, newdata2 = NULL,
                  "variable(s): ", paste(missing_vars, collapse = ", "), ".\n")
         }
     }
-    cores <- min(cores, length(object))
+    cores <- min(con$cores, length(object))
     if (cores > 1L) {
         have_mc <- have_snow <- FALSE
-        if (parallel == "multicore") {
+        if (con$parallel == "multicore") {
             have_mc <- .Platform$OS.type != "windows"
-        } else if (parallel == "snow") {
+        } else if (con$parallel == "snow") {
             have_snow <- TRUE
         }
         if (!have_mc && !have_snow) cores <- 1L
@@ -1203,10 +1181,13 @@ predict.jmList <- function (object, weights, newdata = NULL, newdata2 = NULL,
             preds <-
                 parallel::mclapply(object, predict, newdata = newdata,
                                    newdata2 = newdata2, times = times,
-                                   times_per_id = times_per_id,
+                                   all_times = con$all_times,
+                                   times_per_id = con$times_per_id,
                                    process = process, type_pred = type_pred,
-                                   type = type, level = level, n_samples = n_samples,
-                                   n_mcmc = n_mcmc, return_newdata = return_newdata,
+                                   type = type, level = con$level,
+                                   n_samples = con$n_samples,
+                                   n_mcmc = con$n_mcmc,
+                                   return_newdata = con$return_newdata,
                                    return_mcmc = TRUE, mc.cores = cores)
         } else {
             cl <- parallel::makePSOCKcluster(rep("localhost", cores))
@@ -1214,10 +1195,13 @@ predict.jmList <- function (object, weights, newdata = NULL, newdata2 = NULL,
             preds <-
                 parallel::parLapply(cl, object, predict, newdata = newdata,
                                     newdata2 = newdata2, times = times,
-                                    times_per_id = times_per_id,
+                                    all_times = con$all_times,
+                                    times_per_id = con$times_per_id,
                                     process = process, type_pred = type_pred,
-                                    type = type, level = level, n_samples = n_samples,
-                                    n_mcmc = n_mcmc, return_newdata = return_newdata,
+                                    type = con$type, level = con$level,
+                                    n_samples = con$n_samples,
+                                    n_mcmc = con$n_mcmc,
+                                    return_newdata = con$return_newdata,
                                     return_mcmc = TRUE)
             parallel::stopCluster(cl)
         }
@@ -1225,17 +1209,17 @@ predict.jmList <- function (object, weights, newdata = NULL, newdata2 = NULL,
         preds <-
             lapply(object, predict, newdata = newdata,
                    newdata2 = newdata2, times = times,
-                   times_per_id = times_per_id,
+                   all_times = con$all_times, times_per_id = con$times_per_id,
                    process = process, type_pred = type_pred,
-                   type = type, level = level, n_samples = n_samples,
-                   n_mcmc = n_mcmc, return_newdata = return_newdata,
+                   type = type, level = con$level, n_samples = con$n_samples,
+                   n_mcmc = con$n_mcmc, return_newdata = con$return_newdata,
                    return_mcmc = TRUE)
     }
     extract_mcmc <- function (x) {
         if (is.data.frame(x)) attr(x, "mcmc") else x[["mcmc"]]
     }
     MCMC <- lapply(preds, extract_mcmc)
-    alp <- 1 - level
+    alp <- 1 - con$level
     if (is.list(MCMC[[1L]])) {
         n_outcomes <- length(MCMC[[1L]])
         pred_ <- qs <- vector("list", n_outcomes)

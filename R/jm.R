@@ -1,6 +1,7 @@
 jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
-                functional_forms = NULL, data_Surv = NULL, id_var = NULL,
-                priors = NULL, control = NULL, ...) {
+                functional_forms = NULL, which_independent = NULL,
+                data_Surv = NULL, id_var = NULL, priors = NULL,
+                control = NULL, ...) {
     call <- match.call()
     # control argument:
     # - GK_k: number of quadrature points for the Gauss Kronrod rule; options 15 and 7
@@ -24,7 +25,8 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     con <- list(GK_k = 15L, Bsplines_degree = 2L, base_hazard_segments = 10L,
                 diff = 2L, n_chains = 3L, n_burnin = 500L, n_iter = 3500L,
                 n_thin = 1L, seed = 123L, MALA = FALSE,
-                save_random_effects = FALSE, knots = NULL,
+                save_random_effects = FALSE, save_logLik_contributions = FALSE,
+                knots = NULL,
                 parallel = "snow",
                 cores = parallelly::availableCores(omit = 1L))
     control <- c(control, list(...))
@@ -65,6 +67,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     }
     idVar <- id_names[1L]
     idL <- dataL[[idVar]]
+    idL <- factor(idL, levels = unique(idL))
     nY <- length(unique(idL))
     # order data by idL and time_var
     if (is.null(dataL[[time_var]])) {
@@ -239,7 +242,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     }
     # we need to check that the ordering of the subjects in the same in dataL and dataS.
     # If not, then a warning and do it internally
-    if (!all(order(unique(idT)) == order(unique(dataL[[idVar]])))) {
+    if (!all(order(unique(idT)) == order(factor(unq_id, levels = unq_id)))) {
         warning("It seems that the ordering of the subjects in the dataset used to fit the ",
                 "mixed models and the dataset used for the survival model is not the same. ",
                 "We set internally the datasets in the same order, but it would be best ",
@@ -300,6 +303,20 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         unclass(strt)
     }
     n_strata <- length(unique(strata))
+
+    # extract weights if present, otherwise set wegiht equal to one for all subjects
+    indx <- match("weights", names(Surv_object$call), nomatch = 0)
+    weights <- if (indx) {
+        if (is.null(Surv_object$model)) {
+            stop("Please refit the model using coxph(..., model = TRUE).\n")
+        }
+        model.weights(Surv_object$model)
+    } else {
+        rep(1, nrow(mf_surv_dataS))
+    }
+    intgr_ind <- attr(weights, "integrate")
+    if (is.null(intgr_ind)) intgr_ind <- 0
+    intgr <- any(as.logical(intgr_ind))
 
     # check if we have competing risks or multi-state processes. In this case,
     # we will have multiple strata per subject. NOTE: this will also be the
@@ -385,18 +402,31 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     functional_forms <- functional_forms[order(match(names(functional_forms),
                                                      respVars_form))]
     functional_forms <- mapply2(expand_Dexps, functional_forms, respVars_form)
+
     ###################################################################
     # List of lists
     # One list component per association structure per outcome
     # List components vectors of integers corresponding to the term
     # each association structure corresponds to
-    FunForms_per_outcome <- lapply(functional_forms, extract_functional_forms,
-                                   data = dataS)
+    FunForms_per_outcome <-
+        mapply2(extract_functional_forms, Form = functional_forms,
+                nam = respVars_form, MoreArgs = list(data = dataS))
     FunForms_per_outcome <- lapply(FunForms_per_outcome,
                                    function (x) x[sapply(x, length) > 0])
+
     collapsed_functional_forms <- lapply(FunForms_per_outcome, names)
-    Funs_FunForms <- lapply(functional_forms, extractFuns_FunForms,
-                             data = dataS)
+
+    collapsed_functional_forms <-
+        lapply(collapsed_functional_forms, function (nam) {
+            nn <- c("value", "slope", "area", "velocity", "acceleration",
+                    "coefs")
+            names(unlist(sapply(nn, grep, x = nam, fixed = TRUE,
+                                simplify = FALSE)))
+        })
+
+    Funs_FunForms <-
+        mapply2(extractFuns_FunForms, Form = functional_forms, nam = respVars_form,
+                MoreArgs = list(data = dataS))
     #####################################################
 
     # design matrices for the survival submodel:
@@ -514,6 +544,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                  ind_FE_patt = ind_FE_patt,
                  #####
                  idT = idT, any_gammas = any_gammas, strata = strata,
+                 weights = weights, intgr = intgr, intgr_ind = as.numeric(intgr_ind),
                  Time_right = Time_right, Time_left = Time_left, Time_start = Time_start,
                  delta = delta, which_event = which_event, which_right = which_right,
                  which_left = which_left, which_interval = which_interval,
@@ -549,7 +580,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         zero_ind_Z = zero_ind_Z, time_window = time_window,
         recurrent = !isFALSE(recurrent),
         ind_RE_patt = ind_RE_patt, ind_FE_patt = ind_FE_patt,
-        id_patt = id_patt
+        id_patt = id_patt, callS = Surv_object$call
     )
     ############################################################################
     ############################################################################
@@ -565,8 +596,17 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         mapply2(rep, x = sigmas[ss_sigmas],
                 length.out = lapply(idL_lp, lng_unq)[ss_sigmas])
     D_lis <- lapply(Mixed_objects, extract_D)
-    D <- bdiag(D_lis)
-    b <- mapply2(extract_b, Mixed_objects, unq_idL, MoreArgs = list(n = nY))
+    D <- bdiag2(D_lis, which_independent = which_independent)
+    if (abs(max(nearPD(D) - D)) > sqrt(.Machine$double.eps)) {
+        D <- bdiag2(D_lis, off_diag_val = 1e-04,
+                    which_independent = which_independent)
+        D <- nearPD(D)
+    }
+    ind_zero_D <- which(abs(D) < sqrt(.Machine$double.eps), arr.ind = TRUE)
+    ind_zero_D <- ind_zero_D[ind_zero_D[, 'col'] > ind_zero_D[, 'row'], , drop = FALSE]
+    Data$ind_zero_D <- ind_zero_D
+    b <- mapply2(extract_b, Mixed_objects, unq_idL,
+                 MoreArgs = list(n = nY, unq_id = as.character(unq_id)))
     bs_gammas <- rep(-0.1, ncol(W0_H))
     gammas <- if (inherits(Surv_object, "coxph")) coef(Surv_object) else
         -coef(Surv_object)[-1L] / Surv_object$scale

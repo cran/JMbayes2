@@ -30,7 +30,8 @@ Fits multivariate joint models for longitudinal and time-to-event data.
 
 \usage{
 jm(Surv_object, Mixed_objects, time_var, recurrent = FALSE,
-  functional_forms = NULL, data_Surv = NULL, id_var = NULL, priors = NULL,
+  functional_forms = NULL, which_independent = NULL,
+  data_Surv = NULL, id_var = NULL, priors = NULL,
   control = NULL, \dots)
 
 value(x)
@@ -74,6 +75,7 @@ tv(x, knots = NULL, ord = 2L)
 \item{time_var}{a \code{character} string indicating the time variable in the mixed-effects model(s).}
 \item{recurrent}{a \code{character} string indicating "calendar" or "gap" timescale to fit a recurrent event model.}
 \item{functional_forms}{a \code{list} of formulas. Each formula corresponds to one longitudinal outcome and specifies the association structure between that outcome and the survival submodel as well as any interaction terms between the components of the longitudinal outcome and the survival submodel. See \bold{Examples}.}
+\item{which_independent}{a numeric indicator matrix denoting which outcomes are independent. It can also be the character string \code{"all"} in which case all longitudinal outcomes are assumed independent. Only relevant in joint models with multiple longitudinal outcomes.}
 \item{data_Surv}{the \code{data.frame} used to fit the Cox/AFT survival submodel.}
 \item{id_var}{a \code{character} string indicating the id variable in the survival submodel.}
 \item{priors}{a named \code{list} of user-specified prior parameters:
@@ -150,12 +152,17 @@ tv(x, knots = NULL, ord = 2L)
         \item{\code{n_iter}}{an integer specifying the number of total iterations per chain. Defaults to 3500.}
         \item{\code{n_thin}}{an integer specifying the thinning of the chains. Defaults to 1.}
         \item{\code{seed}}{the seed used in the sampling procedures. Defaults to 123.}
-        \item{\code{MALA}}{a \code{logical}; if TRUE, the MALA algorithm is used when updating the elements
+        \item{\code{MALA}}{\code{logical}; if \code{TRUE}, the MALA algorithm is used when updating the elements
         of the Cholesky factor of the D matrix. Defaults to \code{FALSE}.}
-        \item{\code{save_random_effects}}{a \code{logical}; if TRUE, the full MCMC results of the random
+        \item{\code{save_random_effects}}{\code{logical}; if \code{TRUE}, the full MCMC results of the random
         effects will be saved and returned with the \code{jm} object. Defaults to \code{FALSE}.}
+
+        \item{\code{save_logLik_contributions}}{\code{logical}; if \code{TRUE}, the log-likelihood contributions are
+        saved in the \code{mcmc} component of the \code{jm} object. Defaults to \code{FALSE}}
         \item{\code{cores}}{an integer specifying the number of cores to use for running the chains in
         parallel; no point of setting this greater than \code{n_chains}.}
+        \item{\code{parallel}}{a character string indicating how the parallel sampling of the chains will
+        be performed. Options are \code{"snow"} (default) and \code{"multicore"}.}
         \item{\code{knots}}{a numeric vector with the position of the knots for the B-spline approximation
         of the log baseline hazard function.}
     }

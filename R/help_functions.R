@@ -76,13 +76,13 @@ exclude_NAs <- function (NAs_FE, NAs_RE, id) {
     if (!is.null(all_NAs)) id[-all_NAs] else id
 }
 
-bdiag <- function (...) {
+bdiag <- function (..., off_diag_val = 1e-05) {
     # constructs a block-diagonal matrix
     mlist <- list(...)
     if (length(mlist) == 1)
         mlist <- unlist(mlist, recursive = FALSE)
     csdim <- rbind(c(0, 0), apply(sapply(mlist, dim), 1, cumsum))
-    ret <- array(0, dim = csdim[length(mlist) + 1, ])
+    ret <- array(off_diag_val, dim = csdim[length(mlist) + 1, ])
     add1 <- matrix(rep(1:0, 2), ncol = 2)
     for (i in seq_along(mlist)) {
         indx <- apply(csdim[i:(i + 1), ] + add1, 2, function(x) x[1]:x[2])
@@ -95,6 +95,41 @@ bdiag <- function (...) {
     }
     colnames(ret) <- unlist(lapply(mlist, colnames))
     ret
+}
+
+bdiag2 <- function (mlist, off_diag_val = 1e-05, which_independent = NULL) {
+    # constructs a block-diagonal matrix
+    d <- sapply(mlist, nrow)
+    out <- matrix(off_diag_val, sum(d), sum(d))
+    ind1 <- c(1, cumsum(d[-length(d)]) + 1)
+    ind2 <- cumsum(d)
+    for (i in seq_along(d)) {
+        ind <- seq(ind1[i], ind2[i])
+        out[ind, ind] <- mlist[[i]]
+    }
+    if (!is.null(which_independent)) {
+        if (length(which_independent) == 1 && which_independent == "all") {
+            which_independent <- t(combn(length(mlist), 2))
+        }
+        if (!is.matrix(which_independent) || ncol(which_independent) != 2) {
+            stop("'which_independent' must a matrix with two columns.\n")
+        }
+        if (any(which_independent > length(mlist))) {
+            stop("'which_independent' must contain integer values smaller than ",
+                 length(mlist), ".\n")
+        }
+        if (any(which_independent[, 1L] == which_independent[, 2L])) {
+            stop("'which_independent' cannot contain the same number in both columns.\n")
+        }
+        for (j in seq_len(nrow(which_independent))) {
+            j1 <- which_independent[j, 1]
+            j2 <- which_independent[j, 2]
+            index1 <- seq(ind1[j1], ind2[j1])
+            index2 <- seq(ind1[j2], ind2[j2])
+            out[index1, index2] <- out[index2, index1] <- 0.0
+        }
+    }
+    out
 }
 
 .bdiag <- function (mlist) {
@@ -132,29 +167,32 @@ right_rows <- function (data, times, ids, Q_points) {
     data[c(ind), ]
 }
 
-extract_functional_forms <- function (Form, data) {
+extract_functional_forms <- function (Form, nam, data) {
     tr <- terms(Form)
     mF <- model.frame(tr, data = data)
     M <- model.matrix(tr, mF)
     cnams <- colnames(M)
     possible_forms <- c("value(", "slope(", "area(", "velocity(",
                         "acceleration(", "coefs(")
+    possible_forms <- paste0(possible_forms, nam)
     ind <- unlist(lapply(possible_forms, grep, x = cnams, fixed = TRUE))
     M <- M[, cnams %in% cnams[unique(ind)], drop = FALSE]
-    sapply(c("value", "slope", "area", "velocity", "acceleration", "coefs"),
+    sapply(possible_forms,
            grep, x = colnames(M), fixed = TRUE, simplify = FALSE)
 }
 
 expand_Dexps <- function (Form, respVar) {
     tlabs <- attr(terms(Form), "term.labels")
     dexps_ind <- grep("Dexp", tlabs)
-    dexps <- tlabs[dexps_ind]
-    dexps <- gsub("slope", "value", dexps)
-    p1 <- paste0(respVar, "))")
-    p2 <- paste0(respVar, ")):slope(", respVar, ")")
-    dexps <- gsub(p1, p2, dexps, fixed = TRUE)
-    tlabs[dexps_ind] <- dexps
-    reformulate(tlabs)
+    if (length(dexps_ind)) {
+        dexps <- tlabs[dexps_ind]
+        dexps <- gsub("slope", "value", dexps)
+        p1 <- paste0(respVar, "))")
+        p2 <- paste0(respVar, ")):slope(", respVar, ")")
+        dexps <- gsub(p1, p2, dexps, fixed = TRUE)
+        tlabs[dexps_ind] <- dexps
+        reformulate(tlabs)
+    } else Form
 }
 
 last_rows <- function (data, ids) {
@@ -247,11 +285,11 @@ knots <- function (xl, xr, ndx, deg) {
     c(rep(xl, deg), kn, rep(xr, deg))
 }
 
-extract_b <- function (object, id, n) {
+extract_b <- function (object, id, n, unq_id) {
     b <- data.matrix(ranef(object))
     mat <- matrix(0.0, n, ncol(b))
     colnames(mat) <- colnames(b)
-    mat[id, ] <- b
+    mat[id, ] <- b[unq_id[id], ]
     mat
 }
 
@@ -301,7 +339,7 @@ create_HC_X <- function(x, z, id, terms, data) {
     cnams_z <- colnames(z)
     n_res <- ncol(z)
     X_HC <- vector("list", length = n_res)
-    mat_HC <- matrix(0, nrow= n_res, ncol = ncol(x),
+    mat_HC <- matrix(0, nrow = n_res, ncol = ncol(x),
                      dimnames = list(cnams_z, cnams_x))
     mat_HC[cbind(which(cnams_z %in% cnams_x), which(cnams_x %in% cnams_z))] <- 1 # x_in_z
     # baseline (assumes every model has a random intercept)
@@ -442,18 +480,18 @@ FunForms_ind <- function (FunForms) {
     lapply(FunForms, f)
 }
 
-extractFuns_FunForms <- function (Form, data) {
+extractFuns_FunForms <- function (Form, nam, data) {
     tr <- terms(Form)
     mF <- model.frame(tr, data = data)
     M <- model.matrix(tr, mF)
     cnams <- colnames(M)
     possible_forms <- c("value(", "slope(", "area(", "velocity(",
                         "acceleration(", "coefs(")
+    possible_forms <- paste0(possible_forms, nam)
     ind <- unlist(lapply(possible_forms, grep, x = cnams, fixed = TRUE))
     M <- M[1, cnams %in% cnams[unique(ind)], drop = FALSE]
-    FForms <- sapply(c("value", "slope", "area", "velocity", "acceleration",
-                       "coefs"),
-                     grep, x = colnames(M), fixed = TRUE, simplify = FALSE)
+    FForms <- sapply(possible_forms, grep, x = colnames(M), fixed = TRUE,
+                     simplify = FALSE)
     FForms <- FForms[sapply(FForms, length) > 0]
     get_fun <- function (FForm, nam) {
         cnams <- colnames(M)[FForm]
@@ -577,14 +615,26 @@ cor2cov <- function (R, vars, sds = NULL) {
     sds * R * rep(sds, each = p)
 }
 
-reconstr_D <- function (L, sds) {
+reconstr_D <- function (L, sds, ind_zero_D) {
+    if (!length(L)) {
+        res <- diag(sds^2)
+        return(res[lower.tri(res, TRUE)])
+    }
     p <- length(sds)
     LL <- matrix(0.0, p, p)
-    LL[upper.tri(LL)] <- L
-    LL[1, 1] <- 1
-    LL[cbind(2:p, 2:p)] <- sqrt(1 - colSums(LL^2)[-1L])
-    out <- cor2cov(crossprod(LL), sds = sds)
-    out[lower.tri(out, TRUE)]
+    up <- which(upper.tri(LL)) - 1
+    excl <- (ind_zero_D[, 1] - 1) + (ind_zero_D[, 2] - 1) * p
+    up <- setdiff(up, excl) + 1
+    LL[up] <- L
+    LL[cbind(1:p, 1:p)] <- sqrt(1 - colSums(LL^2))
+    for (j in seq_len(nrow(ind_zero_D))) {
+        j0 <- ind_zero_D[j, 1]
+        j1 <- ind_zero_D[j, 2]
+        LL[j0, j1] <- -sum(LL[, j0] * LL[, j1]) / LL[j0, j0]
+        LL[j1, j1] <- sqrt(1 - sum(LL[seq(1, j1-1), j1]^2))
+    }
+    res <- cor2cov(crossprod(LL), sds = sds)
+    res[lower.tri(res, TRUE)]
 }
 
 lowertri2mat <- function (x, nams = NULL) {
@@ -801,8 +851,7 @@ nearPD <- function (M, eig.tol = 1e-06, conv.tol = 1e-07, posd.tol = 1e-08,
         stop("Input matrix 'M' must be numeric.")
     if (length(M) == 1)
         return(abs(M))
-    if (is.matrix(M) && !identical(M, t(M)))
-        stop("Input matrix M must be square and symmetric.\n")
+    M <- 0.5 * (M + t(M))
     inorm <- function (x) max(rowSums(abs(x)))
     n <- ncol(M)
     U <- matrix(0.0, n, n)
@@ -1374,3 +1423,4 @@ create_sigma_list <- function (sigmas, ss_sigmas, idL) {
 }
 
 lng_unq <- function (x) length(unique(x))
+factor2 <- function (x, ...) factor(x, levels = unique(x), ...)
