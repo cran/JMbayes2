@@ -50,10 +50,10 @@ tvROC.jm <- function (object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
     newdata2[[Time_var]] <- Tstart
     newdata2[[event_var]] <- 0
     preds <- predict(object, newdata = newdata2, process = "event",
-                     times = Thoriz, ...)
-    qi_u_t <- 1 - preds$pred
-    names(qi_u_t) <- preds$id
-    qi_u_t <- qi_u_t[preds$times > Tstart]
+                     times = Thoriz, return_mcmc = TRUE, ...)
+    qi_u_t <- 1 - preds$mcmc
+    rownames(qi_u_t) <- preds$id
+    qi_u_t <- qi_u_t[preds$times > Tstart, , drop = FALSE]
     id <- newdata[[id_var]]
     Time <- newdata[[Time_var]]
     event <- newdata[[event_var]]
@@ -62,7 +62,9 @@ tvROC.jm <- function (object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
     event <- tapply(event, f, tail, 1L)
     names(Time) <- names(event) <- as.character(unique(id))
     thrs <- seq(0, 1, length = 101)
-    Check <- outer(qi_u_t, thrs, "<")
+    Check <- lapply(seq_len(ncol(qi_u_t)), function (i) outer(qi_u_t[, i], thrs, "<"))
+    Check_mean <- outer(1 - preds$pred[preds$times > Tstart], thrs, "<")
+    # outer(qi_u_t, thrs, "<")
     if (type_weights == "model-based") {
         # subjects who died before Thoriz
         ind1 <- Time < Thoriz & event == 1
@@ -81,16 +83,25 @@ tvROC.jm <- function (object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
             ind[ind2] <- ind[ind2] * pi_u_t[nams2]
         }
         # calculate sensitivity and specificity
-        nTP <- colSums(Check * c(ind))
+        ntp <- lapply(Check, function (x) colSums(x * c(ind)))
+        tp <- lapply(ntp, function (x) x / sum(ind))
+        #nTP <- rowMeans(do.call("cbind", ntp))
+        nTP <- colSums(Check_mean * c(ind))
         nFN <- sum(ind) - nTP
         TP <- nTP / sum(ind)
-        nFP <- colSums(Check * c(1 - ind))
+        nfp <- lapply(Check, function (x) colSums(x * c(1 - ind)))
+        fp <- lapply(nfp, function (x) x / sum(1 - ind))
+        nFP <- rowMeans(do.call("cbind", nfp))
+        nFP <- colSums(Check_mean * c(1 - ind))
         nTN <- sum(1 - ind) - nFP
         FP <- nFP / sum(1 - ind)
     } else {
         ind1 <- Time < Thoriz & event == 1
         ind2 <- Time > Thoriz
-        nFP <- colSums(Check * c(ind2))
+        nfp <- lapply(Check, function (x) colSums(x * c(ind2)))
+        fp <- lapply(nfp, function (x) x / sum(ind2))
+        #nFP <- rowMeans(do.call("cbind", nfp))
+        nFP <- colSums(Check_mean * c(ind2))
         nTN <- sum(ind2) - nFP
         FP <- nFP / sum(ind2)
         cens_data <- data.frame(Time = Time, cens_ind = 1 - event)
@@ -98,23 +109,19 @@ tvROC.jm <- function (object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
         weights <- numeric(length(Time))
         ss <- summary(censoring_dist, times = Time[ind1])
         weights[ind1] <- 1 / ss$surv[match(ss$time, Time[ind1])]
-        nTP <- colSums(Check[ind1, , drop = FALSE] / weights[ind1])
+        ntp <- lapply(Check, function (x) colSums(x[ind1, , drop = FALSE] / weights[ind1]))
+        tp <- lapply(ntp, function (x) x /  sum(1 / weights[ind1]))
+        #nTP <- rowMeans(do.call("cbind", ntp))
+        nTP <- colSums(Check_mean[ind1, , drop = FALSE] / weights[ind1])
         nFN <- sum(1 / weights[ind1]) - nTP
         TP <- nTP / sum(1 / weights[ind1])
     }
-    Q <- colMeans(Check)
-    Q. <- 1 - Q
-    k.1.0 <- (TP - Q) / Q.
-    k.0.0 <- (1 - FP - Q.) / Q
-    P <- if (type_weights == "model-based") mean(ind) else mean(ind1)
-    P. <- 1 - P
-    k.05.0 <- (P * Q. * k.1.0 + P. * Q * k.0.0) / (P * Q. + P. * Q)
     f1score <- 2 * nTP / (2 * nTP + nFN + nFP)
     F1score <- median(thrs[f1score == max(f1score)])
     youden <- TP - FP
     Youden <- median(thrs[youden == max(youden)])
     out <- list(TP = TP, FP = FP, nTP = nTP, nFN = nFN, nFP = nFP, nTN = nTN,
-                qSN = k.1.0, qSP = k.0.0, qOverall = k.05.0,
+                tp = do.call("cbind", tp), fp = do.call("cbind", fp),
                 thrs = thrs, F1score = F1score, Youden = Youden,
                 Tstart = Tstart, Thoriz = Thoriz, nr = length(unique(id)),
                 classObject = class(object), type_weights = type_weights,
@@ -124,8 +131,13 @@ tvROC.jm <- function (object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
 }
 
 print.tvROC <- function (x, digits = 4, ...) {
-    cat("\n\tTime-dependent Sensitivity and Specificity for the Joint Model",
-        x$nameObject)
+    if (x$classObject == "jm") {
+        cat("\n\tTime-dependent Sensitivity and Specificity for the Joint Model",
+            x$nameObject)
+    } else if (x$classObject == "coxph") {
+        cat("\n\tTime-dependent Sensitivity and Specificity for the Cox Model",
+            x$nameObject)
+    }
     cat("\n\nAt time:", round(x$Thoriz, digits))
     cat("\nUsing information up to time: ", round(x$Tstart, digits),
         " (", x$nr, " subjects still at risk)", sep = "")
@@ -133,12 +145,11 @@ print.tvROC <- function (x, digits = 4, ...) {
         if (x$type_weights == "IPCW") "inverse probability of censoring Kaplan-Meier weights\n\n"
         else "model-based weights\n\n", sep = "")
     d <- data.frame("cut-off" = x$thrs, "SN" = x$TP, "SP" = 1 - x$FP,
-                    "qSN" = x$qSN, "qSP" = x$qSP, check.names = FALSE,
-                    check.rows = FALSE)
+                    check.names = FALSE, check.rows = FALSE)
     xx <- rep("", nrow(d))
     xx[which.min(abs(x$thr - x$Youden))] <- "*"
     d[[" "]] <- xx
-    d <- d[!is.na(d$qSN) & !is.na(d$qSP), ]
+    d <- d[!is.na(d$SN) & !is.na(d$SP), ]
     d <- d[!duplicated(d[c("SN", "SP")]), ]
     row.names(d) <- 1:nrow(d)
     print(d, digits = digits)
@@ -303,9 +314,22 @@ tvAUC.jm <- function (object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
     TP <- roc$TP
     FP <- roc$FP
     auc <- sum(0.5 * diff(FP) * (TP[-1L] + TP[-length(TP)]), na.rm = TRUE)
-    out <- list(auc = auc, Tstart = Tstart, Thoriz = roc$Thoriz, nr = roc$nr,
+    #tp <- roc$tp
+    #fp <- roc$fp
+    #M <- ncol(tp)
+    #aucs <- length(M)
+    #for (i in seq_len(M)) {
+    #    aucs[i] <- sum(0.5 * diff(fp[, i]) * (tp[-1L, i] + tp[-length(TP), i]),
+    #                   na.rm = TRUE)
+    #}
+    out <- list(auc = auc,
+                #mcmc_auc = aucs,
+                #low_auc = quantile(aucs, 0.025),
+                #upp_auc = quantile(aucs, 0.975),
+                Tstart = Tstart, Thoriz = roc$Thoriz, nr = roc$nr,
                 type_weights = roc$type_weights,
-                classObject = class(object), nameObject = deparse(substitute(object)))
+                classObject = class(object),
+                nameObject = deparse(substitute(object)))
     class(out) <- "tvAUC"
     out
 }
@@ -314,7 +338,8 @@ tvAUC.tvROC <- function (object, ...) {
     TP <- object$TP
     FP <- object$FP
     auc <- sum(0.5 * diff(FP) * (TP[-1L] + TP[-length(TP)]), na.rm = TRUE)
-    out <- list(auc = auc, Tstart = object$Tstart, Thoriz = object$Thoriz,
+    out <- list(auc = auc,
+                Tstart = object$Tstart, Thoriz = object$Thoriz,
                 nr = object$nr, classObject = object$classObject,
                 nameObject = object$nameObject,
                 type_weights = object$type_weights)
@@ -329,7 +354,10 @@ print.tvAUC <- function (x, digits = 4, ...) {
         cat("\n\tTime-dependent AUC for the Joint Model",  x$nameObject)
     else
         cat("\n\tTime-dependent AUC for the Cox Model",  x$nameObject)
-    cat("\n\nEstimated AUC:", round(x$auc, digits))
+    cat("\n\nEstimated AUC: ", round(x$auc, digits))
+    #cat("\n\nEstimated AUC: ", round(x$auc, digits),
+    #    " (95% CI: ", round(x$low_auc, digits), "-", round(x$upp_auc, digits),
+    #    ")", sep = "")
     cat("\nAt time:", round(x$Thoriz, digits))
     cat("\nUsing information up to time: ", round(x$Tstart, digits),
         " (", x$nr, " subjects still at risk)", sep = "")
@@ -342,8 +370,9 @@ print.tvAUC <- function (x, digits = 4, ...) {
 
 calibration_plot <- function (object, newdata, Tstart, Thoriz = NULL,
                               Dt = NULL, df_ns = 3, plot = TRUE,
-                              add_density = TRUE, col = "red", lty = 1, lwd = 1,
-                              col_dens = "grey",
+                              col = "red", lty = 1, lwd = 1,
+                              add_CI = TRUE, col_CI = "lightgrey",
+                              add_density = TRUE, col_dens = "grey",
                               xlab = "Predicted Probabilities",
                               ylab = "Observed Probabilities", main = "", ...) {
     if (!inherits(object, "jm"))
@@ -400,7 +429,7 @@ calibration_plot <- function (object, newdata, Tstart, Thoriz = NULL,
     event <- tapply(event, f, tail, 1L)
     names(Time) <- names(event) <- as.character(unique(id))
     cal_DF <- data.frame(Time = Time, event = event, preds = pi_u_t[names(Time)])
-    cloglog <- function (x) log(-log(1 - x))
+    cloglog <- function (x) log(-log(1.0 - x))
     Bounds <- quantile(cloglog(pi_u_t), probs = c(0.05, 0.95))
     form <- paste0("ns(cloglog(preds), df = ", df_ns,
                    ", B = c(", round(Bounds[1L], 2), ", ",
@@ -410,22 +439,29 @@ calibration_plot <- function (object, newdata, Tstart, Thoriz = NULL,
     qs <- quantile(pi_u_t, probs = c(0.01, 0.99))
     probs_grid <- data.frame(preds = seq(qs[1L], qs[2L], length.out = 100L))
     obs <- 1 - c(summary(survfit(cal_Cox, newdata = probs_grid), times = Thoriz)$surv)
+    low <- 1 - c(summary(survfit(cal_Cox, newdata = probs_grid), times = Thoriz)$low)
+    upp <- 1 - c(summary(survfit(cal_Cox, newdata = probs_grid), times = Thoriz)$upp)
     obs_pi_u_t <- 1 - c(summary(survfit(cal_Cox, newdata = cal_DF), times = Thoriz)$surv)
+    preds <- probs_grid$preds
     if (plot) {
-        plot(probs_grid$preds, obs, type = "l", col = col, lwd = lwd, lty = lty,
-             xlab = xlab, ylab = ylab, main = main, xlim = c(0, 1),
-             ylim = c(0, 1))
+        plot(preds, obs, type = "n", xlab = xlab, ylab = ylab, main = main,
+             xlim = c(0, 1), ylim = c(0, 1))
+        if (add_CI) {
+            polygon(c(preds, rev(preds)), c(low, rev(upp)), border = NA,
+                    col = col_CI)
+        }
+        lines(preds, obs, lty = lty, col = col, lwd = lwd)
         abline(0, 1, lty = 2)
         if (add_density) {
             par(new = TRUE)
             plot(density(pi_u_t), axes = FALSE, xlab = "", ylab = "", main = "",
                  col = col_dens)
-            axis(side = 4)
+            #axis(side = 4)
         }
         invisible()
     } else {
-        list("observed" = obs, "predicted" = probs_grid$preds,
-             "pi_u_t" = pi_u_t, "obs_pi_u_t" = obs_pi_u_t)
+        list("observed" = obs, "predicted" = preds, "pi_u_t" = pi_u_t,
+             "obs_pi_u_t" = obs_pi_u_t, "low" = low, "upp" = upp)
     }
 }
 
@@ -807,11 +843,16 @@ print.tvEPCE <- function (x, digits = 4, ...) {
 }
 
 
-tvBrier <- function (object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
-                     integrated = FALSE, type_weights = c("model-based", "IPCW"),
-                     model_weights = NULL, eventData_fun = NULL,
-                     parallel = c("snow", "multicore"),
-                     cores = parallelly::availableCores(omit = 1L), ...) {
+tvBrier <- function (object, newdata, Tstart, ...) {
+    UseMethod("tvBrier")
+}
+
+tvBrier.jm <-
+    function (object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
+              integrated = FALSE, type_weights = c("model-based", "IPCW"),
+              model_weights = NULL, eventData_fun = NULL,
+              parallel = c("snow", "multicore"),
+              cores = parallelly::availableCores(omit = 1L), ...) {
     parallel <- match.arg(parallel)
     is_jm <- function (object) inherits(object, "jm")
     is_jmList <- function (object) inherits(object, "jmList")
@@ -1191,29 +1232,42 @@ tvBrier <- function (object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
                 ncens = sum(out$ind3), Tstart = Tstart, Thoriz = Thoriz,
                 nfolds = if (!is_jm(object) && !is_jmList(object)) length(object),
                 integrated = integrated, type_weights = type_weights,
+                classObject = class(object),
                 nameObject = deparse(substitute(object)))
     class(out) <- "tvBrier"
     out
 }
 
+tvBrier.jmList <- tvBrier.list <- tvBrier.jm
+
 print.tvBrier <- function (x, digits = 4, ...) {
     if (!inherits(x, "tvBrier"))
         stop("Use only with 'tvBrier' objects.\n")
-    if (!is.null(x$Brier_per_model)) {
-        cat("\nCross-Validated Prediction Error using the Library of Joint Models '", x$nameObject, "'",
-            sep = "")
-        if (x$integrated) {
-            cat("\n\nSuper Learning Estimated Integrated Brier score:", round(x$Brier, digits))
-        } else {
-            cat("\n\nSuper Learning Estimated Brier score:", round(x$Brier, digits))
-        }
-    } else {
-        cat("\nPrediction Error for the Joint Model '", x$nameObject, "'",
+    if (x$classObject == "coxph") {
+        cat("\nPrediction Error for the Cox Model '", x$nameObject, "'",
             sep = "")
         if (x$integrated) {
             cat("\n\nEstimated Integrated Brier score:", round(x$Brier, digits))
         } else {
             cat("\n\nEstimated Brier score:", round(x$Brier, digits))
+        }
+    } else {
+        if (!is.null(x$Brier_per_model)) {
+            cat("\nCross-Validated Prediction Error using the Library of Joint Models '", x$nameObject, "'",
+                sep = "")
+            if (x$integrated) {
+                cat("\n\nSuper Learning Estimated Integrated Brier score:", round(x$Brier, digits))
+            } else {
+                cat("\n\nSuper Learning Estimated Brier score:", round(x$Brier, digits))
+            }
+        } else {
+            cat("\nPrediction Error for the Joint Model '", x$nameObject, "'",
+                sep = "")
+            if (x$integrated) {
+                cat("\n\nEstimated Integrated Brier score:", round(x$Brier, digits))
+            } else {
+                cat("\n\nEstimated Brier score:", round(x$Brier, digits))
+            }
         }
     }
     if (x$integrated) {

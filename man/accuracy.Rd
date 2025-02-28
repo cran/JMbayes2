@@ -8,6 +8,7 @@
 \alias{calibration_plot}
 \alias{calibration_metrics}
 \alias{tvBrier}
+\alias{tvBrier.jm}
 \alias{tvEPCE}
 \alias{create_folds}
 
@@ -32,15 +33,19 @@ tvAUC(object, newdata, Tstart, \dots)
 \method{tvAUC}{tvROC}(object, \dots)
 
 calibration_plot(object, newdata, Tstart, Thoriz = NULL,
-    Dt = NULL, df_ns = 3, plot = TRUE, add_density = TRUE,
+    Dt = NULL, df_ns = 3, plot = TRUE,
     col = "red", lty = 1, lwd = 1,
-    col_dens = "grey", xlab = "Predicted Probabilities",
+    add_CI = TRUE, col_CI = "lightgrey",
+    add_density = TRUE, col_dens = "grey",
+    xlab = "Predicted Probabilities",
     ylab = "Observed Probabilities", main = "", \dots)
 
 calibration_metrics(object, newdata, Tstart, Thoriz = NULL,
     Dt = NULL, df_ns = 3, \dots)
 
-tvBrier(object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
+tvBrier(object, newdata, Tstart, \dots)
+
+\method{tvBrier}{jm}(object, newdata, Tstart, Thoriz = NULL, Dt = NULL,
     integrated = FALSE, type_weights = c("model-based", "IPCW"),
     model_weights = NULL, eventData_fun = NULL,
     parallel = c("snow", "multicore"),
@@ -85,6 +90,10 @@ It is important that this function does not alter the ordering of the subjects i
 predicted probabilities used in the Cox model that assess calibration.}
 
 \item{plot}{logical; should a plot be produced. If \code{FALSE}, a list is returned with the observed and predicted probabilities.}
+
+\item{add_CI}{logical; should 0.95 pointwise confidence intervals be added around the calibration line.}
+
+\item{col_CI}{character; the color of the shaded area representing the 0.95 pointwise confidence intervals around the calibration line.}
 
 \item{add_density}{logical; should the kernal density estimation of the predicted probabilities be superimposed in the calibration plot.}
 
