@@ -12,7 +12,8 @@ importFrom("stats", "coef", "terms", "model.frame", "model.frame.default",
            "lm.fit", "sd", "ar", "var", "vcov", "optim", "delete.response",
            "model.response", "rnorm", "quantile", "runif", "rlnorm", "cov2cor",
            "as.formula", "gaussian", ".getXlevels", "makepredictcall", "plogis",
-           "reformulate", "predict", "pnorm", "ave", "median", "density")
+           "reformulate", "predict", "pnorm", "ave", "median", "density",
+           "simulate", "rbinom", "rpois", "rt", "rbeta")
 importFrom("parallel", "makeCluster", "stopCluster", "detectCores", "parLapply",
            "clusterSetRNGStream", "makePSOCKcluster", "mclapply")
 importFrom("parallelly", "availableCores")
@@ -28,6 +29,7 @@ importFrom("ggplot2", "ggplot", "geom_density", "aes", "ggtitle", "theme_bw",
 importFrom("gridExtra", "marrangeGrob")
 importFrom("matrixStats", "rowQuantiles", "colVars", "colLogSumExps",
            "colCumsums")
+importFrom("abind", "abind")
 importFrom("graphics", "abline", "axis", "box", "lines", "mtext", "par",
            "polygon", "title", "plot", "points")
 
@@ -60,8 +62,11 @@ S3method(tvBrier, jm)
 S3method(tvBrier, jmList)
 S3method(tvBrier, list)
 S3method(tvBrier, coxph)
+S3method(calibration_plot, coxph)
+S3method(calibration_plot, jm)
 S3method(tvROC, jm)
 S3method(tvROC, coxph)
+S3method(simulate, jm)
 S3method(print, tvROC)
 S3method(plot, tvROC)
 S3method(print, tvAUC)

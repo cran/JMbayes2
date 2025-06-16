@@ -6,6 +6,7 @@
 \alias{tvAUC.tvROC}
 \alias{tvROC.jm}
 \alias{calibration_plot}
+\alias{calibration_plot.jm}
 \alias{calibration_metrics}
 \alias{tvBrier}
 \alias{tvBrier.jm}
@@ -32,8 +33,10 @@ tvAUC(object, newdata, Tstart, \dots)
 
 \method{tvAUC}{tvROC}(object, \dots)
 
-calibration_plot(object, newdata, Tstart, Thoriz = NULL,
-    Dt = NULL, df_ns = 3, plot = TRUE,
+calibration_plot(object, newdata, Tstart, \dots)
+
+\method{calibration_plot}{jm}(object, newdata, Tstart, Thoriz = NULL,
+    Dt = NULL, df_ns = NULL, plot = TRUE,
     col = "red", lty = 1, lwd = 1,
     add_CI = TRUE, col_CI = "lightgrey",
     add_density = TRUE, col_dens = "grey",
@@ -41,7 +44,7 @@ calibration_plot(object, newdata, Tstart, Thoriz = NULL,
     ylab = "Observed Probabilities", main = "", \dots)
 
 calibration_metrics(object, newdata, Tstart, Thoriz = NULL,
-    Dt = NULL, df_ns = 3, \dots)
+    Dt = NULL, df_ns = NULL, \dots)
 
 tvBrier(object, newdata, Tstart, \dots)
 
@@ -56,7 +59,8 @@ tvEPCE(object, newdata, Tstart, Thoriz = NULL, Dt = NULL, eps = 0.001,
     parallel = c("snow", "multicore"),
     cores = parallelly::availableCores(omit = 1L), \dots)
 
-create_folds(data, V = 5, id_var = "id", strata = NULL, seed = 123L)
+create_folds(data, V = 5, id_var = "id",
+    method = c("CV", "Bootstrap"), strata = NULL, seed = 123L)
 }
 
 \arguments{
@@ -86,8 +90,9 @@ It is important that this function does not alter the ordering of the subjects i
 \item{cores}{integer denoting the number of cores to be used when a library of joint models has been provided in
     \code{object}. If \code{cores = 1}, no parallel computing is used.}
 
-\item{df_ns}{the degrees of freedom for the natural cubic spline of the cloglog transformation of the
-predicted probabilities used in the Cox model that assess calibration.}
+\item{df_ns}{the degrees of freedom for the natural cubic spline of the cloglog transformation of the predicted
+    probabilities used in the Cox model that assesses calibration. The default is 3 unless there are less than 25 events
+    in the interval (\code{Tstart}, \code{Thoriz}] in which case it is 2.}
 
 \item{plot}{logical; should a plot be produced. If \code{FALSE}, a list is returned with the observed and predicted probabilities.}
 
@@ -101,11 +106,16 @@ predicted probabilities used in the Cox model that assess calibration.}
 
 \item{data}{the data.frame to split in folds.}
 
-\item{V}{numeric scalar denoting the number of folds.}
+\item{V}{numeric scalar denoting the number of folds for cross-validation or the number of sample for the Bootstrap methods.}
 
 \item{id_var}{character string denoting the name of the subject id variable in \code{data}.}
 
 \item{strata}{character vector with the names of stratifying variables.}
+
+\item{method}{character string indicating which method to use to create the training and testing datasets in
+\code{create_folds()}. The default is V-fold cross-validation. For the \code{Bootstrap} option, \code{V} samples
+with replacement from the original dataset are proruced as training data. The testing data contains the subjects
+that were not selected in the respective Bootstrap sample.}
 
 \item{seed}{integer denoting the seed.}
 

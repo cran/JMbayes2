@@ -1266,3 +1266,73 @@ predict.jmList <- function (object, weights, newdata = NULL, newdata2 = NULL,
     }
     out
 }
+
+simulate.jm <- function (object, nsim = 1L, seed = NULL, ...) {
+    if (!exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE))
+        runif(1L)
+    if (is.null(seed))
+        RNGstate <- get(".Random.seed", envir = .GlobalEnv)
+    else {
+        R.seed <- get(".Random.seed", envir = .GlobalEnv)
+        set.seed(seed)
+        RNGstate <- structure(seed, kind = as.list(RNGkind()))
+        on.exit(assign(".Random.seed", R.seed, envir = .GlobalEnv))
+    }
+    sim_fun <- function (family, n, mu, phi) {
+        switch(family$family,
+               "gaussian" = rnorm(n, mu, phi),
+               "Student's-t" = mu + phi * rt(n, df = 4),
+               "binomial" = rbinom(n, 1, mu),
+               "poisson" = rpois(n, mu),
+               "beta" = rbeta(n, shape1 = mu * phi, shape2 = phi * (1.0 - mu)))
+    }
+    # information from fitted joint model
+    n <- object$model_data$n
+    idL_lp <- object$model_data$idL_lp
+    ind_RE <- object$model_data$ind_RE
+    X <- object$model_data$X
+    Z <- object$model_data$Z
+    n_outcomes <- length(idL_lp)
+    families <- object$model_info$families
+    has_sigmas <- as.logical(object$model_data$has_sigmas)
+
+    # MCMC results
+    ncz <- sum(sapply(Z, ncol))
+    ind_betas <- grep("betas", names(object$statistics$Mean), fixed = TRUE)
+    mcmc_betas <- object$mcmc[ind_betas]
+    mcmc_betas[] <- lapply(mcmc_betas, function (x) do.call('rbind', x))
+    mcmc_sigmas <- matrix(0.0, nrow(mcmc_betas[[1]]), n_outcomes)
+    mcmc_sigmas[, has_sigmas] <- do.call('rbind', object$mcmc$sigmas)
+    # random effects
+    mcmc_RE <- dim(object$mcmc[["b"]][[1L]])[3L] > 1L
+    if (mcmc_RE) {
+        mcmc_b <- abind::abind(object$mcmc[["b"]])
+    } else {
+        b <- ranef(object)
+    }
+    # simulate outcome vectors
+    valY <- vector("list", nsim)
+    indices <- sample(nrow(mcmc_betas[[1]]), nsim)
+    for (j in seq_len(nsim)) {
+        # parameters
+        jj <- indices[j]
+        betas <- lapply(mcmc_betas, function (x) x[jj, ])
+        sigmas <- mcmc_sigmas[jj, ]
+        if (mcmc_RE) {
+            b <- mcmc_b[, , jj]
+        }
+
+        y <- vector("list", n_outcomes)
+        for (i in seq_len(n_outcomes)) {
+            fixed_effects <- c(X[[i]] %*% betas[[i]])
+            random_effects <- rowSums(Z[[i]] * b[idL_lp[[i]], ind_RE[[i]]])
+            eta <- fixed_effects + random_effects
+            mu <- families[[i]]$linkinv(eta)
+            y[[i]] <- sim_fun(families[[i]], length(mu), mu, sigmas[i])
+        }
+        valY[[j]] <- y
+    }
+    names(valY) <- paste0("sim_", seq_len(nsim))
+    attr(valY, "seed") <- RNGstate
+    valY
+}
