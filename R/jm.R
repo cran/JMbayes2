@@ -1,8 +1,9 @@
-jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
-                functional_forms = NULL, which_independent = NULL,
-                data_Surv = NULL, id_var = NULL, priors = NULL,
-                control = NULL, ...) {
+jm.default <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
+                        functional_forms = NULL, which_independent = NULL,
+                        base_hazard = NULL, data_Surv = NULL, id_var = NULL,
+                        priors = NULL, control = NULL, ...) {
     call <- match.call()
+    call[[1L]] <- quote(JMbayes2::jm) # To ensure update() can refit
     # control argument:
     # - GK_k: number of quadrature points for the Gauss Kronrod rule; options 15 and 7
     # - Bsplines_degree: the degree of the splines in each basis; default quadratic splines
@@ -22,11 +23,11 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     #         of the Cholesky factor of the D matrix
     # - save_random_effects: if TRUE, the random effects are stored in the fitted object
     # - knots: numeric vector with the knots for the baseline hazard function
-    con <- list(GK_k = 15L, Bsplines_degree = 2L, base_hazard_segments = 10L,
-                diff = 2L, n_chains = 3L, n_burnin = 500L, n_iter = 3500L,
+    con <- list(GK_k = 15L, n_chains = 3L, n_burnin = 500L, n_iter = 3500L,
                 n_thin = 1L, seed = 123L, MALA = FALSE,
                 save_random_effects = FALSE, save_logLik_contributions = FALSE,
-                knots = NULL,
+                basis = "bs", Bsplines_degree = 2L, base_hazard_segments = 9L,
+                knots = NULL, timescale_base_hazard = "identity", diff = 2L,
                 parallel = "snow",
                 cores = parallelly::availableCores(omit = 1L))
     control <- c(control, list(...))
@@ -303,8 +304,35 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         unclass(strt)
     }
     n_strata <- length(unique(strata))
+    con$basis <- rep_len(con$basis, n_strata)
+    con$Bsplines_degree <- rep_len(con$Bsplines_degree, n_strata)
+    con$base_hazard_segments <- rep_len(con$base_hazard_segments, n_strata)
+    con$timescale_base_hazard <- rep_len(con$timescale_base_hazard, n_strata)
+    con$diff <- rep_len(con$diff, n_strata)
+    if (!is.null(base_hazard)) {
+        if (length(base_hazard) != n_strata) {
+            base_hazard <- rep_len(base_hazard, n_strata)
+            warning("length of 'base_hazard' has been replicated to match the ",
+                    "length of strata.\n")
+        }
+        bhh <- matrix(NA_real_, n_strata, 6)
+        for (k in seq_len(n_strata)) {
+            if (!is.na(base_hazard[k])) {
+                bhh[k, ] <- bh <- get_hazard(base_hazard[k])
+                if (bh['log_time']) con$timescale_base_hazard[k] <- "log"
+                if (bh['ns']) con$basis[k] <- "ns"
+                if (bh['pwc_const']) con$Bsplines_degree[k] <- 0L
+                if (bh['pwc_linear']) con$Bsplines_degree[k] <- 1L
+                if (bh['weibull']) {
+                    con$timescale_base_hazard[k] <- "log"
+                    con$basis[k] <- "ns"
+                    con$base_hazard_segments[k] <- 1L
+                }
+            }
+        }
+    }
 
-    # extract weights if present, otherwise set wegiht equal to one for all subjects
+    # extract weights if present, otherwise set weight equal to one for all subjects
     indx <- match("weights", names(Surv_object$call), nomatch = 0)
     weights <- if (indx) {
         if (is.null(Surv_object$model)) {
@@ -372,9 +400,13 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         } else {
             lapply(split(Time_right, strata), range)
         }
-        con$knots <- lapply(qs, function (x)
-            knots(x[1L], x[2L], con$base_hazard_segments,
-                  con$Bsplines_degree))
+        con$knots <- mapply2(knots, x = qs, ndx = con$base_hazard_segments,
+                             deg = con$Bsplines_degree, basis = con$basis)
+    }
+    for (k in seq_len(n_strata)) {
+        if (con$timescale_base_hazard[k] != "identity") {
+            con$knots[[k]] <- log(con$knots[[k]])
+        }
     }
 
     # Extract functional forms per longitudinal outcome
@@ -419,7 +451,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     collapsed_functional_forms <-
         lapply(collapsed_functional_forms, function (nam) {
             nn <- c("value", "slope", "area", "velocity", "acceleration",
-                    "coefs")
+                    "coefs", "Delta")
             names(unlist(sapply(nn, grep, x = nam, fixed = TRUE,
                                 simplify = FALSE)))
         })
@@ -443,10 +475,11 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     # "_H2" to denote calculation at the 'Time_integration2'.
     strata_H <- rep(strata, each = con$GK_k)
     W0_H <- if (recurrent == "gap") {
-        create_W0(c(t(st - trunc_Time)), con$knots, con$Bsplines_degree + 1,
-                  strata_H)
+        create_W0(c(t(st - trunc_Time)), con$knots, con$Bsplines_degree,
+                  strata_H, con$basis, con$timescale_base_hazard)
     } else {
-        create_W0(c(t(st)), con$knots, con$Bsplines_degree + 1, strata_H)
+        create_W0(c(t(st)), con$knots, con$Bsplines_degree, strata_H,
+                  con$basis, con$timescale_base_hazard)
     }
     dataS_H <- SurvData_HazardModel(split(st, row(st)), dataS, Time_start,
                                     paste0(idT, "_", strata), time_var)
@@ -463,21 +496,50 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     zero_ind_X <- lapply(zero_ind, function (x) if (length(x)) x[[1]][["X"]] else x)
     zero_ind_Z <- lapply(zero_ind, function (x) if (length(x)) x[[1]][["Z"]] else x)
     time_window <- lapply(attr, "[[", 4L)
+    standardise <- lapply(attr, "[[", 5L)
+    IE_time <- IE_time2 <- lapply(attr, "[[", 6L) #!! new
+    if (any(lengths(IE_time))) { #!! new
+      bool <- vapply(IE_time, function(x)
+        all(vapply(x, function(x_i) identical(x_i, x[[1]]), logical(1))),
+        logical(1))
+      if (any(!bool)) {
+        bad <- names(IE_time)[!bool]
+        msg <- "Inconsistent 'IE_time' variable detected within in the following outcome(s): "
+        stop(paste0(msg, paste(bad, collapse = ", ")), ".")
+      }
+      remove(bool)
+      IE_time <- lapply(IE_time, function(x) if (length(x)) x[[1L]] else x)
+      if (!all(vapply(IE_time, function(x) is.character(x) || !length(x), logical(1)))) {
+        stop("'IE_time' must be a character string.")
+      }
+      missing_IE_time <- setdiff(unlist(IE_time), colnames(dataS))
+      if (length(missing_IE_time)) {
+        stop("Cannot extract the IE_time variable(s) from the dataset used to ",
+             "fit the survival model. Please include the following variable(s)",
+             " in the dataset: ", paste(missing_IE_time, collapse = ", "), ".")
+      }
+      remove(missing_IE_time)
+    }
+    IE_time <- lapply(IE_time, function(v) if (length(v)) dataS[[v]] else v) #!! new
     X_H <- design_matrices_functional_forms(st, terms_FE_noResp,
                                             dataL, time_var, idVar, idT,
                                             collapsed_functional_forms, Xbar,
-                                            eps, direction, zero_ind_X, time_window)
+                                            eps, direction, zero_ind_X,
+                                            time_window, standardise, IE_time) #!! new
     Z_H <- design_matrices_functional_forms(st, terms_RE,
                                             dataL, time_var, idVar, idT,
                                             collapsed_functional_forms, NULL,
-                                            eps, direction, zero_ind_Z, time_window)
+                                            eps, direction, zero_ind_Z,
+                                            time_window, standardise, IE_time) #!! new
     U_H <- lapply(functional_forms, construct_Umat, dataS = dataS_H)
     if (length(which_event)) {
         W0_h <- if (recurrent == "gap") {
             create_W0(Time_right - trunc_Time, con$knots,
-                      con$Bsplines_degree + 1, strata)
+                      con$Bsplines_degree, strata, con$basis,
+                      con$timescale_base_hazard)
         } else {
-            create_W0(Time_right, con$knots, con$Bsplines_degree + 1, strata)
+            create_W0(Time_right, con$knots, con$Bsplines_degree,
+                      strata, con$basis, con$timescale_base_hazard)
         }
         dataS_h <- SurvData_HazardModel(split(Time_right, seq_along(Time_right)),
                                         dataS, Time_start,
@@ -490,19 +552,21 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         X_h <- design_matrices_functional_forms(Time_right, terms_FE_noResp,
                                                 dataL, time_var, idVar, idT,
                                                 collapsed_functional_forms, Xbar,
-                                                eps, direction, zero_ind_X, time_window)
+                                                eps, direction, zero_ind_X,
+                                                time_window, standardise, IE_time) #!! new
         Z_h <- design_matrices_functional_forms(Time_right, terms_RE,
                                                 dataL, time_var, idVar, idT,
                                                 collapsed_functional_forms, NULL,
-                                                eps, direction, zero_ind_Z, time_window)
+                                                eps, direction, zero_ind_Z,
+                                                time_window, standardise, IE_time) #!! new
         U_h <- lapply(functional_forms, construct_Umat, dataS = dataS_h)
     } else {
         W0_h <- W_h <- matrix(0.0)
         X_h <- Z_h <- U_h <- rep(list(matrix(0.0)), length(respVars))
     }
     if (length(which_interval)) {
-        W0_H2 <- create_W0(c(t(st2)), con$knots, con$Bsplines_degree + 1,
-                           strata_H)
+        W0_H2 <- create_W0(c(t(st2)), con$knots, con$Bsplines_degree, strata_H,
+                      con$basis, con$timescale_base_hazard)
         dataS_H2 <- SurvData_HazardModel(split(st2, row(st2)), dataS, Time_start,
                                          paste0(idT, "_", strata), time_var)
         mf2 <- model.frame.default(terms_Surv_noResp, data = dataS_H2)
@@ -513,11 +577,15 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         X_H2 <- design_matrices_functional_forms(st2, terms_FE_noResp,
                                                  dataL, time_var, idVar, idT,
                                                  collapsed_functional_forms, Xbar,
-                                                 eps, direction, zero_ind_X, time_window)
+                                                 eps, direction, zero_ind_X,
+                                                 time_window, standardise,
+                                                 IE_time) #!! new
         Z_H2 <- design_matrices_functional_forms(st2, terms_RE,
                                                  dataL, time_var, idVar, idT,
                                                  collapsed_functional_forms, NULL,
-                                                 eps, direction, zero_ind_Z, time_window)
+                                                 eps, direction, zero_ind_Z,
+                                                 time_window, standardise,
+                                                 IE_time) #!! new
         U_H2 <- lapply(functional_forms, construct_Umat, dataS = dataS_H2)
     } else {
         W0_H2 <- W_H2 <- matrix(0.0)
@@ -578,9 +646,11 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         Funs_FunForms = lapply(Funs_FunForms, function (x) if (!is.list(x)) list(x) else x),
         eps = eps, direction = direction, zero_ind_X = zero_ind_X,
         zero_ind_Z = zero_ind_Z, time_window = time_window,
+        standardise = standardise, IE_time = IE_time2, #!! new
         recurrent = !isFALSE(recurrent),
         ind_RE_patt = ind_RE_patt, ind_FE_patt = ind_FE_patt,
-        id_patt = id_patt, callS = Surv_object$call
+        id_patt = id_patt, callS = Surv_object$call,
+        NAs_FE = NAs_FE_dataL, NAs_RE = NAs_RE_dataL
     )
     ############################################################################
     ############################################################################
@@ -615,11 +685,12 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     frailty <- rep(0.0, nT)
     alphaF <- rep(0.0, max(n_strata - 1, 1))
     sigmaF <- 0.1
-    initial_values <- list(betas = betas, log_sigmas = log_sigmas,
-                           sigmas = sigmas, D = D, b = b, bs_gammas = bs_gammas,
-                           gammas = gammas, alphas = alphas,
-                           tau_bs_gammas = rep(20, n_strata),
-                           alphaF = alphaF, frailty = frailty, sigmaF = sigmaF)
+    initial_values <-
+        list(betas = betas, log_sigmas = log_sigmas,
+             sigmas = sigmas, D = D, b = b, bs_gammas = bs_gammas,
+             gammas = gammas, alphas = alphas,
+             tau_bs_gammas = ifelse(con$base_hazard_segments > 1L, 20, 0.001),
+             alphaF = alphaF, frailty = frailty, sigmaF = sigmaF)
     ############################################################################
     ############################################################################
     # Limits
@@ -629,9 +700,10 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     ############################################################################
     ############################################################################
     # Priors
-    Tau_bs_gammas <- crossprod(diff(diag(ncol(W0_H) / n_strata),
-                                    differences = con$diff))
-    Tau_bs_gammas <- rep(list(Tau_bs_gammas), n_strata)
+    Tau_bs_gammas <-
+        mapply2(function (nc, d)
+            crossprod(diff(diag(nc), differences = if (nc > 3) d else 1)),
+                nc = attr(W0_H, "ncW0"), d = con$diff)
     mean_betas <- lapply(betas, unname)
     mean_betas <- mapply2(function (b, m) {b[1] <- b[1] + m; b},
                           mean_betas, mapply2("%*%", Xbar, betas))
@@ -645,6 +717,7 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     prs <- list(mean_betas_HC = mean_betas_HC, Tau_betas_HC = Tau_betas_HC,
                 mean_betas_nHC = mean_betas_nHC, Tau_betas_nHC = Tau_betas_nHC,
                 mean_bs_gammas = lapply(Tau_bs_gammas, function (x) x[, 1] * 0),
+                penalized_bs_gammas = rep(TRUE, n_strata),
                 Tau_bs_gammas = Tau_bs_gammas,
                 A_tau_bs_gammas = rep(5, n_strata),
                 B_tau_bs_gammas = rep(0.5, n_strata),
@@ -678,6 +751,13 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
                 sigmaF_sigmas = 5.0,
                 sigmaF_shape = 0.25/0.4,
                 sigmaF_mean = 0.25)
+    if (!is.null(base_hazard)) {
+        weib_ind <- !is.na(bhh[, 4]) & bhh[, 4] > 0
+        prs$penalized_bs_gammas[weib_ind] <- FALSE
+    }
+    prs$Tau_bs_gammas[!prs$penalized_bs_gammas] <-
+        lapply(prs$Tau_bs_gammas[!prs$penalized_bs_gammas],
+               function (m) 0.1 *  diag(, ncol(m)))
     if (is.null(priors) || !is.list(priors)) {
         priors <- prs
     } else {
@@ -710,11 +790,12 @@ jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         priors$A_lambda_gammas <- 1
         priors$B_lambda_gammas <- 1
     }
+    initial_values$tau_bs_gammas[!priors$penalized_bs_gammas] <- 1
     ############################################################################
     ############################################################################
     # Fit the model
     Fit <- jm_fit(Data, model_info, initial_values, priors, con)
-    out <- c(Fit, list(model_data = Data, model_info = model_info,
+    out <- c(Fit, list(model_data = c(Data, data), model_info = model_info,
                        initial_values = initial_values, control = con,
                        priors = priors, call = call))
     class(out) <- "jm"

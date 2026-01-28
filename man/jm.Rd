@@ -6,6 +6,7 @@
 \alias{velocity}
 \alias{acceleration}
 \alias{coefs}
+\alias{Delta}
 \alias{vexpit}
 \alias{Dexpit}
 \alias{vexp}
@@ -31,15 +32,16 @@ Fits multivariate joint models for longitudinal and time-to-event data.
 \usage{
 jm(Surv_object, Mixed_objects, time_var, recurrent = FALSE,
   functional_forms = NULL, which_independent = NULL,
-  data_Surv = NULL, id_var = NULL, priors = NULL,
-  control = NULL, \dots)
+  base_hazard = NULL, data_Surv = NULL, id_var = NULL,
+  priors = NULL, control = NULL, \dots)
 
-value(x)
-coefs(x, zero_ind = NULL)
-slope(x, eps = 0.001, direction = "both")
-velocity(x, eps = 0.001, direction = "both")
-acceleration(x)
-area(x, time_window = NULL)
+value(x, IE_time = NULL)
+coefs(x, zero_ind = NULL, IE_time = NULL)
+slope(x, eps = 0.001, direction = "both", IE_time = NULL)
+velocity(x, eps = 0.001, direction = "both", IE_time = NULL)
+acceleration(x, IE_time = NULL)
+area(x, time_window = NULL, IE_time = NULL)
+Delta(x, time_window = NULL, standardise = TRUE, IE_time = NULL)
 
 vexpit(x)
 Dexpit(x)
@@ -76,6 +78,7 @@ tv(x, knots = NULL, ord = 2L)
 \item{recurrent}{a \code{character} string indicating "calendar" or "gap" timescale to fit a recurrent event model.}
 \item{functional_forms}{a \code{list} of formulas. Each formula corresponds to one longitudinal outcome and specifies the association structure between that outcome and the survival submodel as well as any interaction terms between the components of the longitudinal outcome and the survival submodel. See \bold{Examples}.}
 \item{which_independent}{a numeric indicator matrix denoting which outcomes are independent. It can also be the character string \code{"all"} in which case all longitudinal outcomes are assumed independent. Only relevant in joint models with multiple longitudinal outcomes.}
+\item{base_hazard}{a \code{character} vector indicating the type of hazard function.}
 \item{data_Surv}{the \code{data.frame} used to fit the Cox/AFT survival submodel.}
 \item{id_var}{a \code{character} string indicating the id variable in the survival submodel.}
 \item{priors}{a named \code{list} of user-specified prior parameters:
@@ -142,11 +145,6 @@ tv(x, knots = NULL, ord = 2L)
 \item{control}{a list of control values with components:
     \describe{
         \item{\code{GK_k}}{the number of quadrature points for the Gauss Kronrod rule; options 15 and 7.}
-        \item{\code{Bsplines_degree}}{the degree of the splines in each basis; default quadratic splines.}
-        \item{\code{base_hazard_segments}}{the number of segments to split the follow-up period.
-        Defaults to 10.}
-        \item{\code{diff}}{the order of the difference used in the penalty matrix for the B-splines for
-        h_0. Defaults to 2.}
         \item{\code{n_chains}}{an integer specifying the number of chains for the MCMC. Defaults to 3.}
         \item{\code{n_burnin}}{an integer specifying the number of burn-in iterations. Defaults to 500.}
         \item{\code{n_iter}}{an integer specifying the number of total iterations per chain. Defaults to 3500.}
@@ -163,8 +161,22 @@ tv(x, knots = NULL, ord = 2L)
         parallel; no point of setting this greater than \code{n_chains}.}
         \item{\code{parallel}}{a character string indicating how the parallel sampling of the chains will
         be performed. Options are \code{"snow"} (default) and \code{"multicore"}.}
-        \item{\code{knots}}{a numeric vector with the position of the knots for the B-spline approximation
-        of the log baseline hazard function.}
+        \item{\code{basis}}{character string with possible values \code{"bs"} (default) or \code{"ns"}.
+            When \code{"bs"} a B-spline basis is used to approximate the log baseline hazard function with
+            degree of the spline specified by the \code{Bsplines_degree}. When \code{"ns"} a natrual cubic
+            spline basis is used; in this case the value of the \code{Bsplines_degree} control argument is
+            ignored.}
+        \item{\code{Bsplines_degree}}{the degree of the splines in each basis; default is quadratic splines.}
+        \item{\code{base_hazard_segments}}{the number of segments to split the follow-up period for the
+            spline approximation of the log baseline hazard function. Defaults to 10.}
+        \item{\code{timescale_base_hazard}}{character string with possible values \code{"identity"} (default)
+            or \code{"log"}. When \code{"identity"} the spline basis is specified for the time variable in its
+            orginal scale. When \code{"log"} the spline basis is specified for the logarithm of the time variable.}
+        \item{\code{diff}}{the order of the difference used in the penalty matrix for the coefficients of the
+            splines used to approximate the log baseline hazard function. Defaults to 2.}
+        \item{\code{knots}}{a numeric vector with the position of the knots for the spline approximation
+            of the log baseline hazard function. The default is equally-spaced knots starting from
+            \code{sqrt(.Machine$double.eps)} until the maximum follow-up time.}
     }
   }
 \item{x}{a numeric input variable.}
@@ -174,7 +186,12 @@ tv(x, knots = NULL, ord = 2L)
 \item{eps}{numeric scalar denoting the step-size for the finite difference approximation.}
 \item{direction}{character string for the direction of the numerical derivative, options are \code{"both"},
 and \code{"backward"}.}
-\item{time_window}{numeric scalar denoting the lower limit for calculating the integral.}
+\item{time_window}{numeric scalar controlling the time window used by the \code{Delta()} and \code{area()}
+functional forms. For \code{area()}, \code{time_window} specifies the lower limit of the interval over which
+the integral is evaluated. For \code{Delta()}, \code{time_window} specifies the length of the time interval
+(i.e., the contrast between t and t - \code{time_window}) over which the finite difference is computed; when set to \code{NULL} (the default), the contrast is taken between the current time and time 0.}
+\item{standardise}{\code{logical}; controls whether the \code{Delta()} functional form returns a rate or a raw contrast. If \code{TRUE}, the difference between the values at the two time points is divided by the time distance between them, yielding a change per unit time. If \code{FALSE}, \code{Delta()} returns the raw difference over the specified time window. Defaults to \code{FALSE}.}
+\item{IE_time}{a \code{character} string specifying the name of the intermediate event time variable in the \code{data.frame} used to fit the Cox/AFT survival submodel. For groups/subjects who did not experience the intermediate event, the time should be set to \code{Inf}. The same \code{IE_time} variable should be used when specifying multiple functional forms for the same longitudinal outcome.}
 \item{\dots}{arguments passed to \code{control}.}
 }
 

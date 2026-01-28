@@ -3,24 +3,29 @@ export(area, calibration_metrics, calibration_plot, cumuplot, coef, compare_jm,
        ggdensityplot, ggtraceplot, jm, model.frame, model.matrix, ranef, slope,
        terms, traceplot, tv, tvAUC, tvBrier, tvEPCE, tvROC, value, vexpit,
        Dexpit, vexp, vabs, Dexp, vlog, vlog2, vlog10, vsqrt, poly2, poly3, poly4,
-       velocity, acceleration, coefs, create_folds)
+       velocity, acceleration, coefs, Delta, create_folds, variogram, ppcheck,
+       slicer, consensus, lme, coxph, mixed_model)
 
 import(Rcpp)
 importFrom("utils", "glob2rx", "tail", "head", "combn")
-importFrom("stats", "coef", "terms", "model.frame", "model.frame.default",
+importFrom("stats", "coef", "fitted", "terms", "model.frame", "model.frame.default",
            "model.matrix", "model.matrix.default", "model.weights", "family",
            "lm.fit", "sd", "ar", "var", "vcov", "optim", "delete.response",
            "model.response", "rnorm", "quantile", "runif", "rlnorm", "cov2cor",
            "as.formula", "gaussian", ".getXlevels", "makepredictcall", "plogis",
            "reformulate", "predict", "pnorm", "ave", "median", "density",
-           "simulate", "rbinom", "rpois", "rt", "rbeta")
+           "simulate", "rbinom", "rpois", "rt", "rbeta", "ecdf", "rnbinom",
+           "loess.smooth", "smooth.spline", "loess", "qt", "rgamma", "approx",
+           "spline")
 importFrom("parallel", "makeCluster", "stopCluster", "detectCores", "parLapply",
            "clusterSetRNGStream", "makePSOCKcluster", "mclapply")
 importFrom("parallelly", "availableCores")
-importFrom("nlme", "fixef", "ranef", "pdMatrix")
+importFrom("nlme", "fixef", "ranef", "pdMatrix", "lme")
 importFrom("GLMMadaptive", "effectPlotData")
-importFrom("survival", "coxph", "untangle.specials", "strata", "survfit", "Surv")
-importFrom("splines", "splineDesign")
+importFrom("survival", "concordance", "untangle.specials", "strata",
+           "survfit", "Surv", "coxph")
+importFrom("survC1", "Est.Cval")
+importFrom("splines", "splineDesign", "ns")
 importFrom("coda", "as.mcmc.list", "as.mcmc", "traceplot", "densplot",
            "gelman.diag", "cumuplot")
 importFrom("ggplot2", "ggplot", "geom_density", "aes", "ggtitle", "theme_bw",
@@ -30,8 +35,10 @@ importFrom("gridExtra", "marrangeGrob")
 importFrom("matrixStats", "rowQuantiles", "colVars", "colLogSumExps",
            "colCumsums")
 importFrom("abind", "abind")
+importFrom("MASS", "mvrnorm")
+importFrom("GLMMadaptive", "mixed_model")
 importFrom("graphics", "abline", "axis", "box", "lines", "mtext", "par",
-           "polygon", "title", "plot", "points")
+           "polygon", "title", "plot", "points", "legend", "matplot", "text")
 
 useDynLib(JMbayes2, .registration = TRUE)
 
@@ -44,7 +51,9 @@ S3method(ggdensityplot, jm)
 S3method(print, jm)
 S3method(summary, jm)
 S3method(print, summary.jm)
+S3method(coef, summary.jm)
 S3method(coef, jm)
+S3method(fitted, jm)
 S3method(fixef, jm)
 S3method(ranef, jm)
 S3method(terms, jm)
@@ -69,13 +78,18 @@ S3method(tvROC, coxph)
 S3method(simulate, jm)
 S3method(print, tvROC)
 S3method(plot, tvROC)
+S3method(plot, vrgm)
 S3method(print, tvAUC)
 S3method(print, tvBrier)
 S3method(print, tvEPCE)
 S3method(predict, jm)
 S3method(predict, jmList)
-
-
-
-
-
+S3method(print, consensus_jm)
+S3method(jm, default)
+S3method(jm, sliced_coxph)
+S3method(lme, default)
+S3method(lme, sliced_data)
+S3method(coxph, default)
+S3method(coxph, sliced_data)
+S3method(mixed_model, default)
+S3method(mixed_model, sliced_data)

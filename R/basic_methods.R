@@ -302,6 +302,18 @@ coef.jm <- function (object, ...) {
              "association" = object$statistics$Mean[["alphas"]])
 }
 
+coef.summary.jm <- function (object, process = c("longitudinal", "event"), ...) {
+    process <- match.arg(process)
+    if (process == "event") {
+        object[['Survival']]
+    } else {
+        ind <- grep("Outcome", names(object), fixed = TRUE)
+        out <- object[ind]
+        names(out) <- object[['respVars']]
+        out
+    }
+}
+
 fixef.jm <- function(object, outcome = Inf, ...) {
     if (!is.numeric(outcome) || outcome < 0) {
         stop("'outcome' should be a positive integer.")
@@ -334,6 +346,22 @@ ranef.jm <- function(object, outcome = Inf, post_vars = FALSE, ...) {
             attr(out, "post_vars") <-
             object$statistics$post_vars[ind, ind, , drop = FALSE]
     }
+    out
+}
+
+fitted.jm <- function (object, ...) {
+    fits <- function (X, betas, Z, b, id, ind_RE) {
+        FE <- c(X %*% betas)
+        RE <- rowSums(Z * b[id, ind_RE, drop = FALSE])
+        FE + RE
+    }
+    means <- object$statistics$Mean
+    ind <- grep("betas", names(means), fixed = TRUE)
+    out <-
+        mapply2(fits, X = object$model_data[['X']], betas = means[ind],
+                Z = object$model_data[['Z']], id = object$model_data$idL_lp,
+                ind_RE = object$model_data$ind_RE, MoreArgs = list(b = means[['b']]))
+    names(out) <- unlist(object$model_info$var_names$respVars)
     out
 }
 
@@ -378,7 +406,7 @@ ggtraceplot <- function (object, ...) UseMethod("ggtraceplot")
 ggtraceplot.jm <- function(object,
                            parm = c("all", "betas", "sigmas", "D", "bs_gammas",
                                     "tau_bs_gammas", "gammas", "alphas"),
-                           size = 1, alpha = 0.8,
+                           linewidth = 1, alpha = 0.8,
                            theme = c('standard', 'catalog', 'metro',
                                      'pastel', 'beach', 'moonlight', 'goo',
                                      'sunset', 'custom'), grid = FALSE,
@@ -402,7 +430,7 @@ ggtraceplot.jm <- function(object,
       if (n_chains == 3 | !is.null(custom_theme)) {
         gplots[[i]] <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
           geom_line(aes(x = iteration, y = value, color = chain),
-                    size = size, alpha = alpha) +
+                    linewidth = linewidth, alpha = alpha) +
           ggtitle(paste('Traceplot of ', unique(ggdata$parm)[i])) +
           theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
           scale_color_manual(values = ggcolthemes[[coltheme]]) +
@@ -410,7 +438,7 @@ ggtraceplot.jm <- function(object,
       } else {
         gplots[[i]] <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
           geom_line(aes(x = iteration, y = value, color = chain),
-                    size = size, alpha = alpha) +
+                    linewidth = linewidth, alpha = alpha) +
           ggtitle(paste('Traceplot of ', unique(ggdata$parm)[i])) +
           theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
           guides(color = guide_legend(override.aes = list(alpha = 1)))
@@ -422,7 +450,7 @@ ggtraceplot.jm <- function(object,
       if (n_chains == 3 | !is.null(custom_theme)) {
         g <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
           geom_line(aes(x = iteration, y = value, color = chain),
-                    size = size, alpha = alpha) +
+                    linewidth = linewidth, alpha = alpha) +
           ggtitle(paste('Traceplot of ', unique(ggdata$parm)[i])) +
           theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
           scale_color_manual(values = ggcolthemes[[coltheme]]) +
@@ -431,7 +459,7 @@ ggtraceplot.jm <- function(object,
       } else {
         g <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
           geom_line(aes(x = iteration, y = value, color = chain),
-                    size = size, alpha = alpha) +
+                    linewidth = linewidth, alpha = alpha) +
           ggtitle(paste('Traceplot of ', unique(ggdata$parm)[i])) +
           theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
           guides(color = guide_legend(override.aes = list(alpha = 1)))
@@ -446,7 +474,7 @@ ggdensityplot <- function (object, ...) UseMethod("ggdensityplot")
 ggdensityplot.jm <- function(object,
                       parm = c("all", "betas", "sigmas", "D", "bs_gammas",
                                "tau_bs_gammas", "gammas", "alphas"),
-                      size = 1, alpha = 0.6,
+                      linewidth = 1, alpha = 0.6,
                       theme = c('standard', 'catalog', 'metro',
                                 'pastel', 'beach', 'moonlight', 'goo',
                                 'sunset', 'custom'), grid = FALSE,
@@ -470,7 +498,7 @@ ggdensityplot.jm <- function(object,
           if (n_chains == 3 | !is.null(custom_theme)) {
             gplots[[i]] <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
               geom_density(aes(x = value, color = chain, fill = chain),
-                           size = size, alpha = alpha) +
+                           linewidth = linewidth, alpha = alpha) +
               ggtitle(paste('Density plot of ', unique(ggdata$parm)[i])) +
               theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
               scale_color_manual(values = ggcolthemes[[coltheme]]) +
@@ -479,7 +507,7 @@ ggdensityplot.jm <- function(object,
           } else {
             gplots[[i]] <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
               geom_density(aes(x = value, color = chain, fill = chain),
-                           size = size, alpha = alpha) +
+                           linewidth = linewidth, alpha = alpha) +
               ggtitle(paste('Density plot of ', unique(ggdata$parm)[i])) +
               theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
               guides(color = guide_legend(override.aes = list(alpha = 1)))
@@ -491,7 +519,7 @@ ggdensityplot.jm <- function(object,
           if (n_chains == 3 | !is.null(custom_theme)) {
             g <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
               geom_density(aes(x = value, color = chain, fill = chain),
-                           size = size, alpha = alpha) +
+                           linewidth = linewidth, alpha = alpha) +
               ggtitle(paste('Density plot of ', unique(ggdata$parm)[i])) +
               theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
               scale_color_manual(values = ggcolthemes[[coltheme]]) +
@@ -501,7 +529,7 @@ ggdensityplot.jm <- function(object,
           } else {
             g <- ggplot(ggdata[ggdata$parm %in% unique(ggdata$parm)[i], ]) +
               geom_density(aes(x = value, color = chain, fill = chain),
-                           size = size, alpha = alpha) +
+                           linewidth = linewidth, alpha = alpha) +
               ggtitle(paste('Density plot of ', unique(ggdata$parm)[i])) +
               theme_bw() + theme(plot.title = element_text(hjust=0.5)) +
               guides(color = guide_legend(override.aes = list(alpha = 1)))
@@ -605,8 +633,8 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL, times = NULL,
     type <- match.arg(type)
     con <- list(all_times = FALSE, times_per_id = FALSE, level = 0.95,
                 return_newdata = FALSE, use_Y = TRUE, return_mcmc = FALSE,
-                n_samples = 200L, n_mcmc = 55L, parallel = "snow",
-                cores = NULL, seed = 123L)
+                return_params_mcmc = FALSE, n_samples = 200L, n_mcmc = 55L,
+                parallel = "snow", cores = NULL, seed = 123L)
     control <- c(control, list(...))
     namC <- names(con)
     con[(namc <- names(control))] <- control
@@ -704,11 +732,11 @@ predict.jm <- function (object, newdata = NULL, newdata2 = NULL, times = NULL,
     if (process == "longitudinal") {
         predict_Long(object, components_newdata, newdata, newdata2, times,
                      con$all_times, con$times_per_id, type, type_pred, con$level,
-                     con$return_newdata, con$return_mcmc)
+                     con$return_newdata, con$return_mcmc, con$return_params_mcmc)
     } else {
         predict_Event(object, components_newdata, newdata, newdata2, times,
                       con$times_per_id, con$level, con$return_newdata,
-                      con$return_mcmc)
+                      con$return_mcmc, con$return_params_mcmc)
     }
 }
 
@@ -982,32 +1010,34 @@ rc_setup <- function(rc_data, trm_data,
                      nameStrata = "strata", nameStatus = "status") {
   # warnings
   rc_bol <- c(idVar, statusVar, startVar, stopVar) %in% names(rc_data)
-  if(any(!rc_bol)) {
-    stop(paste0("\nThe variable '", c(idVar, statusVar, startVar, stopVar)[!rc_bol],
+  if (any(!rc_bol)) {
+    stop(paste0("The variable '", c(idVar, statusVar, startVar, stopVar)[!rc_bol],
                 "' is not present in 'rc_data' dataset."))
   }
   trm_bol <- c(idVar, statusVar, stopVar) %in% names(trm_data)
-  if(any(!trm_bol)) {
-    stop(paste0("\nThe variable '", c(idVar, statusVar, stopVar)[!trm_bol],
+  if (any(!trm_bol)) {
+    stop(paste0("The variable '", c(idVar, statusVar, stopVar)[!trm_bol],
                 "' is not present in 'trm_data' dataset."))
   }
-  if(!setequal(rc_data[[idVar]],  trm_data[[idVar]])) {
+  if (!setequal(rc_data[[idVar]], trm_data[[idVar]])) {
     stop("The groups/subjects in both datasets do not seem to match.")
   }
-  if(any(rc_data[[startVar]] > rc_data[[stopVar]])) {
-    stop(paste0("'", stopVar, "' cannot be smaller than '", startVar," in the recurring event data.'"))
+  if (any(rc_data[[startVar]] > rc_data[[stopVar]])) {
+    stop(paste0("'", stopVar, "' cannot be smaller than '", startVar,
+                "' in the recurring event data."))
   }
-  rc_data <- rc_data[order(rc_data[[idVar]], rc_data[[startVar]]), ]
+  rc_data  <- rc_data[order(rc_data[[idVar]], rc_data[[startVar]]), ]
   trm_data <- trm_data[order(trm_data[[idVar]]), ]
-  if(any(rc_data[[stopVar]] > trm_data[[stopVar]][rc_data[[idVar]]])) {
-    stop(paste0("'", stopVar, "' in the recurring event data cannot be larger than '", stopVar," in the terminal event data.'"))
+  id_match <- match(rc_data[[idVar]], trm_data[[idVar]])
+  if (any(rc_data[[stopVar]] > trm_data[[stopVar]][id_match])) {
+    stop(paste0("'", stopVar, "' in the recurring event data cannot be larger than '",
+                stopVar,"' in the terminal event data."))
   }
   # create new dataset
   ## CR dataset
   n <- nrow(trm_data)
   unqLevs <- unique(trm_data[[statusVar]])
   unqLevs <- unqLevs[unqLevs != trm_censLevel]
-  status <- trm_data[[statusVar]] != trm_censLevel
   dataOut1 <- trm_data[rep(seq_len(n), each = length(unqLevs)), , drop = FALSE]
   dataOut1[[nameStrata]] <- rep(unqLevs, times = n)
   dataOut1[[nameStatus]] <- as.numeric(dataOut1[[statusVar]] == dataOut1[[nameStrata]])
@@ -1016,11 +1046,42 @@ rc_setup <- function(rc_data, trm_data,
   ## Rec dataset
   dataOut2 <- rc_data
   dataOut2[[nameStrata]] <- "R"
-  dataOut2[[nameStatus]] <- dataOut2[[statusVar]]
+  dataOut2[[nameStatus]] <- as.numeric(dataOut2[[statusVar]])
   ## combine the 2 datasets
+  names1 <- names(dataOut1)
+  names2 <- names(dataOut2)
+  common_names <- intersect(names1, names2)
+  miss1 <- setdiff(names2, names1)
+  miss2 <- setdiff(names1, names2)
+  if (length(miss1)) {
+    warning("The following variables were missing in the 'trm_data' and were created as NA: ",
+            paste(miss1, collapse = ", "), ".")
+    dataOut1[miss1] <- NA # add missing vars as NA
+  }
+  if (length(miss2)) {
+    warning("The following variables were missing in the 'rc_data' and were created as NA: ",
+            paste(miss2, collapse = ", "), ".")
+    dataOut2[miss2] <- NA
+  }
+  class1 <- sapply(dataOut1[common_names], class)
+  class2 <- sapply(dataOut2[common_names], class)
+  conflict_names <- common_names[class1 != class2]
+  if (length(conflict_names)) {
+    warning("The following variables had the same name but different classes and were renamed: ",
+            paste(conflict_names, collapse = ", "), ".")
+    names(dataOut1)[match(conflict_names, names(dataOut1))] <- paste0(conflict_names,
+                                                                      "_trm") # rename vars that are in BOTH and have different class
+    names(dataOut2)[match(conflict_names, names(dataOut2))] <- paste0(conflict_names,
+                                                                      "_rc")
+    dataOut1[paste0(conflict_names, "_rc")] <- NA
+    dataOut2[paste0(conflict_names, "_trm")] <- NA
+  }
+  dataOut2 <- dataOut2[names(dataOut1)] # reorder columns in the same order
   dataOut <- rbind(dataOut1, dataOut2)
   dataOut[[nameStrata]] <- as.factor(dataOut[[nameStrata]]) # automatically assigns "R" as reference level based on the alphabetical order of the levels
-  dataOut <- dataOut[order(dataOut[[idVar]], dataOut[[nameStrata]], dataOut[[startVar]]), ]
+  dataOut <- dataOut[order(dataOut[[idVar]],
+                           dataOut[[nameStrata]],
+                           dataOut[[startVar]]), ]
   rownames(dataOut) <- seq_len(nrow(dataOut))
   dataOut
 }
@@ -1267,7 +1328,12 @@ predict.jmList <- function (object, weights, newdata = NULL, newdata2 = NULL,
     out
 }
 
-simulate.jm <- function (object, nsim = 1L, seed = NULL, ...) {
+simulate.jm <- function (object, nsim = 1L, seed = NULL, newdata = NULL,
+                         process = c("longitudinal", "event"),
+                         random_effects = c("posterior_means", "mcmc", "prior"),
+                         params_mcmc = NULL, Fforms_fun = NULL,
+                         include_outcome = FALSE, return_random_effects = FALSE,
+                         tol = 0.001, iter = 100L, ...) {
     if (!exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE))
         runif(1L)
     if (is.null(seed))
@@ -1278,61 +1344,1226 @@ simulate.jm <- function (object, nsim = 1L, seed = NULL, ...) {
         RNGstate <- structure(seed, kind = as.list(RNGkind()))
         on.exit(assign(".Random.seed", R.seed, envir = .GlobalEnv))
     }
-    sim_fun <- function (family, n, mu, phi) {
-        switch(family$family,
-               "gaussian" = rnorm(n, mu, phi),
-               "Student's-t" = mu + phi * rt(n, df = 4),
-               "binomial" = rbinom(n, 1, mu),
-               "poisson" = rpois(n, mu),
-               "beta" = rbeta(n, shape1 = mu * phi, shape2 = phi * (1.0 - mu)))
+    process <- match.arg(process)
+    if (is.character(random_effects)) {
+        random_effects <- match.arg(random_effects)
     }
     # information from fitted joint model
-    n <- object$model_data$n
-    idL_lp <- object$model_data$idL_lp
     ind_RE <- object$model_data$ind_RE
-    X <- object$model_data$X
-    Z <- object$model_data$Z
+    control <- object$control
+    if (is.null(newdata)) {
+        n <- object$model_data$n
+        y <- object$model_data$y
+        X <- object$model_data$X
+        Z <- object$model_data$Z
+        idL_lp <- object$model_data$idL_lp
+        times <- object$model_data$dataL[[object$model_info$var_names$time_var]]
+        times <- mapply2(exclude_NAs, object$model_info$NAs_FE,
+                         object$model_info$NAs_RE, MoreArgs = list(id = times))
+    } else {
+        id_var <- object$model_info$var_names$idVar
+        if (is.null(id_var)) {
+            stop("The id variable '", id_var, "' cannot be found in newdata.\n")
+        }
+        id <- newdata[[id_var]]
+        id <- id. <- factor(id, levels = unique(id))
+        n <- length(unique(id))
+        terms_FE <- terms(object)
+        frames_FE <- lapply(terms_FE, model.frame.default, data = newdata)
+        terms_RE <- terms(object, type = "random")
+        frames_RE <- lapply(terms_RE, model.frame.default, data = newdata)
+        NAs_FE <- lapply(frames_FE, attr, "na.action")
+        NAs_RE <- lapply(frames_RE, attr, "na.action")
+        frames_FE <- mapply2(fix_NAs_fixed, frames_FE, NAs_FE, NAs_RE)
+        frames_RE <- mapply2(fix_NAs_random, frames_RE, NAs_RE, NAs_FE)
+        y <- lapply(frames_FE, model.response)
+        y <- lapply(y, function (yy) {
+            if (is.factor(yy)) as.numeric(yy != levels(yy)[1L]) else yy
+        })
+        X <- mapply2(model.matrix.default, terms_FE, frames_FE)
+        Z <- mapply2(model.matrix.default, terms_RE, frames_RE)
+        unq_id <- unique(id)
+        id <- mapply2(exclude_NAs, NAs_FE, NAs_RE, MoreArgs = list(id = id))
+        id[] <- lapply(id, match, table = unq_id)
+        idL_lp <- lapply(id, function (x) match(x, unique(x)))
+        times <- newdata[[object$model_info$var_names$time_var]]
+        times <- mapply2(exclude_NAs, NAs_FE, NAs_RE,
+                         MoreArgs = list(id = times))
+    }
     n_outcomes <- length(idL_lp)
     families <- object$model_info$families
     has_sigmas <- as.logical(object$model_data$has_sigmas)
-
+    Bspline_dgr <- control$Bsplines_degree
+    knots <- control$knots
+    basis <- control$basis
+    timescale_base_hazard <- control$timescale_base_hazard
+    if (is.null(newdata)) {
+        dataS <- object$model_data$dataS
+        Times <- object$model_data$Time_right
+        event <- object$model_data$delta
+        W <- object$model_data$W_h
+        strt <- object$model_data$strata
+    } else {
+        dataS <- newdata[tapply(row.names(newdata), id., tail, n = 1L), ]
+        terms_event <- terms(object, process = "event")
+        frames_event <- model.frame.default(terms_event, data = dataS)
+        Surv_Response <- model.response(frames_event)
+        type_censoring <- attr(Surv_Response, "type")
+        if (type_censoring == "right") {
+            Times <- unname(Surv_Response[, "time"])
+            event <- unname(Surv_Response[, "status"])
+        } else if (type_censoring == "counting") {
+            Times <- unname(Surv_Response[, "stop"])
+            event <-  unname(Surv_Response[, "status"])
+        } else {
+            stop("simulate.jm() does not yet work for this type of censoring.\n")
+        }
+        W <- model.matrix.default(frames_event, data = dataS)[, -1L, drop = FALSE]
+        ind_strata <- attr(terms_event, "specials")$strata
+        strt <- if (is.null(ind_strata)) {
+            rep(1, nrow(frames_event))
+        } else {
+            unclass(frames_event[[ind_strata]])
+        }
+    }
     # MCMC results
     ncz <- sum(sapply(Z, ncol))
-    ind_betas <- grep("betas", names(object$statistics$Mean), fixed = TRUE)
-    mcmc_betas <- object$mcmc[ind_betas]
-    mcmc_betas[] <- lapply(mcmc_betas, function (x) do.call('rbind', x))
-    mcmc_sigmas <- matrix(0.0, nrow(mcmc_betas[[1]]), n_outcomes)
-    mcmc_sigmas[, has_sigmas] <- do.call('rbind', object$mcmc$sigmas)
-    # random effects
-    mcmc_RE <- dim(object$mcmc[["b"]][[1L]])[3L] > 1L
-    if (mcmc_RE) {
-        mcmc_b <- abind::abind(object$mcmc[["b"]])
-    } else {
+    if (is.null(params_mcmc)) {
+        ind_betas <- grep("betas", names(object$statistics$Mean), fixed = TRUE)
+        mcmc_betas <- object$mcmc[ind_betas]
+        mcmc_betas[] <- lapply(mcmc_betas, function (x) do.call('rbind', x))
+        mcmc_sigmas <- matrix(0.0, nrow(mcmc_betas[[1]]), n_outcomes)
+        if (any(has_sigmas)) mcmc_sigmas[, has_sigmas] <- do.call('rbind', object$mcmc$sigmas)
+        mcmc_bs_gammas <- do.call('rbind', object$mcmc$bs_gammas)
+        has_gammas <- !is.null(object$mcmc$gammas)
+        if (has_gammas) mcmc_gammas <- do.call('rbind', object$mcmc$gammas)
+        mcmc_W_std_gammas <- do.call('rbind', object$mcmc$W_std_gammas)
+        mcmc_alphas <- do.call('rbind', object$mcmc$alphas)
+        mcmc_Wlong_std_alphas <- do.call('rbind', object$mcmc$Wlong_std_alphas)
         b <- ranef(object)
+        if (length(random_effects) == 1L && random_effects == "mcmc") {
+            mcmc_RE <- dim(object$mcmc[["b"]][[1L]])[3L] > 1L
+            if (mcmc_RE) {
+                mcmc_b <- abind::abind(object$mcmc[["b"]])
+            } else {
+                stop("refit the model using 'jm(..., save_random_effects = TRUE)'.\n")
+            }
+        }
+        get_D <- function (x, n) {
+            m <- matrix(0.0, n, n)
+            m[lower.tri(m, TRUE)] <- x
+            m <- m + t(m)
+            diag(m) <- diag(m) * 0.5
+            m
+        }
+        xx <- do.call('rbind', object$mcmc$D)
+        mcmc_D <- array(0.0, c(ncz, ncz, nrow(xx)))
+        for (m in seq_len(nrow(mcmc_betas[[1L]]))) {
+            mcmc_D[, , m] <- get_D(xx[m, ], ncz)
+        }
+    } else {
+        mcmc_betas <- params_mcmc[['betas']]
+        mcmc_sigmas <- params_mcmc[['sigmas']]
+        mcmc_bs_gammas <- params_mcmc[['bs_gammas']]
+        mcmc_gammas <- params_mcmc[['gammas']]
+        mcmc_W_std_gammas <- params_mcmc[['W_std_gammas']]
+        mcmc_alphas <- params_mcmc[['alphas']]
+        mcmc_Wlong_std_alphas <- params_mcmc[['Wlong_std_alphas']]
+        mcmc_b <- params_mcmc[['b']]
+        mcmc_D <- params_mcmc[['D']]
+        if (nsim > dim(mcmc_b)[3L]) {
+            warning("'nsim' is greater than the available MCMC sample size. ",
+                    "It is set to ", dim(mcmc_b)[3L], ".\n")
+            nsim <- dim(mcmc_b)[3L]
+        }
+        if (length(random_effects) == 1L && is.character(random_effects) &&
+            random_effects == "posterior_means") {
+            stop("'random_effects' cannot be set to 'posterior_means' ",
+                 "when 'params_mcmc' is not NULL.\nYou will need to include ",
+                 "the MCMC sample of random effects in the 'params_mcmc' list.\n")
+        }
     }
     # simulate outcome vectors
-    valY <- vector("list", nsim)
-    indices <- sample(nrow(mcmc_betas[[1]]), nsim)
-    for (j in seq_len(nsim)) {
-        # parameters
-        jj <- indices[j]
-        betas <- lapply(mcmc_betas, function (x) x[jj, ])
-        sigmas <- mcmc_sigmas[jj, ]
-        if (mcmc_RE) {
-            b <- mcmc_b[, , jj]
+    if (process == "longitudinal") {
+        sim_fun <- function (family, n, mu, phi) {
+            switch(family$family,
+                   "gaussian" = rnorm(n, mu, phi),
+                   "Student's-t" = mu + phi * rt(n, df = .df),
+                   "binomial" = rbinom(n, .N, mu),
+                   "poisson" = rpois(n, mu),
+                   "negative binomial" = rnbinom(n, size = phi, mu = mu),
+                   "beta" = rbeta(n, shape1 = mu * phi, shape2 = phi * (1 - mu)),
+                   "Gamma" = rgamma(n, shape = phi, scale = mu / phi))
         }
-
-        y <- vector("list", n_outcomes)
+        indices <- sample(nrow(mcmc_betas[[1]]), nsim)
+        val <- vector("list", n_outcomes)
+        names(val) <- object$model_info$var_names$respVars_form
+        if (length(random_effects) == 1L && random_effects == "prior") {
+            simulated_RE <- array(0.0, c(n, ncz, nsim))
+            for (j in seq_len(nsim)) {
+                simulated_RE[, , j] <-
+                    MASS::mvrnorm(n, rep(0, ncz), mcmc_D[, , indices[j]])
+            }
+        }
         for (i in seq_len(n_outcomes)) {
-            fixed_effects <- c(X[[i]] %*% betas[[i]])
-            random_effects <- rowSums(Z[[i]] * b[idL_lp[[i]], ind_RE[[i]]])
-            eta <- fixed_effects + random_effects
-            mu <- families[[i]]$linkinv(eta)
-            y[[i]] <- sim_fun(families[[i]], length(mu), mu, sigmas[i])
+            if (include_outcome) {
+                attr(y[[i]], "times") <- times[[i]]
+                attr(y[[i]], "id") <- idL_lp[[i]]
+            }
+            if (return_random_effects) {
+                out_RE <- array(0.0, c(n, ncz, nsim))
+            }
+            rep_y <- matrix(0.0, nrow(X[[i]]), nsim)
+            for (j in seq_len(nsim)) {
+                # parameters
+                jj <- indices[j]
+                betas <- lapply(mcmc_betas, function (x) x[jj, ])
+                sigmas <- mcmc_sigmas[jj, ]
+                bb <- if (length(random_effects) == 1L && is.character(random_effects)) {
+                    switch(random_effects,
+                           "mcmc" = mcmc_b[, , jj],
+                           "posterior_means" = b,
+                           "prior" = simulated_RE[, , j])
+                } else {
+                    if (length(dim(random_effects)) > 2)
+                        random_effects[, , j] else random_effects
+                }
+                if (return_random_effects) {
+                    out_RE[, , j] <- bb
+                }
+                FE <- c(X[[i]] %*% betas[[i]])
+                if (!is.matrix(bb)) bb <- rbind(bb)
+                RE <- rowSums(Z[[i]] * bb[idL_lp[[i]], ind_RE[[i]]])
+                eta <- FE + RE
+                mu <- families[[i]]$linkinv(eta)
+                if (families[[i]][['family']] == "binomial") {
+                    .N <- if (NCOL(y[[i]]) == 1) rep(1, length(mu)) else y[[i]][, 2]
+                }
+                if (families[[i]][['family']] == "Student's-t") {
+                    .df <- families[[i]][['df']]
+                }
+                rep_y[, j] <- sim_fun(families[[i]], length(mu), mu, sigmas[i])
+            }
+            colnames(rep_y) <- paste0("sim_", seq_len(nsim))
+            val[[i]] <- rep_y
+            if (return_random_effects) {
+                attr(val[[i]], "RE") <- out_RE
+            }
         }
-        valY[[j]] <- y
+        if (length(random_effects) == 1L && random_effects == "prior") {
+            outT <- simulate(object, nsim = nsim, newdata = newdata,
+                         process = "event", seed = seed, tol = tol, iter = iter,
+                         random_effects = simulated_RE, Fforms_fun = Fforms_fun)
+            for (i in seq_len(n_outcomes)) {
+                for (j in seq_len(ncol(val[[i]]))) {
+                    na_ind <- times[[i]] > outT$Times[idL_lp[[i]], j]
+                    val[[i]][na_ind, j] <- NA_real_
+                }
+            }
+        }
+        if (include_outcome) val <- c(val, list(outcome = y))
+    } else {
+        if (is.null(Fforms_fun) || !is.function(Fforms_fun)) {
+            stop("you need to provide the 'Fforms_fun' function; ",
+                 "see the examples in `?simulate.jm` for more information.\n")
+        }
+        if (length(unique(object$model_data$strata)) > 1L) {
+            stop("'simulate.jm()' does not currently support stratified joint models.\n")
+        }
+        log_hazard <- function (time, subj) {
+            subjj <- if (length(time) != length(subj)) rep(subj, length(time)) else subj
+            tt <- if (timescale_base_hazard == "identity") time else log(time)
+            W0 <- create_W0(tt, knots, Bspline_dgr, strt[subj], basis,
+                            timescale_base_hazard)
+            log_h0 <- c(W0 %*% bs_gammas) - rescale_factor
+            covariates <- if (has_gammas) c(W[subj, , drop = FALSE] %*% gammas) else 0.0
+            long <- c(Fforms_fun(time, betas, bb[subjj, , drop = FALSE],
+                                 dataS[subjj, ]) %*% alphas)
+            log_h0 + covariates + long
+        }
+        invS <- function (time, subj, .K) {
+            GQ <- gaussLegendre(.K)
+            wk <- GQ$wk
+            sk <- GQ$sk
+            K <- length(sk)
+            P <- time / 2
+            st <- outer(P, sk + 1)
+            id_GQ <- rep(subj, each = K)
+            log_Pwk <- rep(log(wk), length(P)) + rep(log(P), each = K)
+            log_integrand <- log_Pwk + log_hazard(c(t(st)), id_GQ)
+            c(rowsum(exp(log_integrand), id_GQ, reorder = FALSE)) + log_u[subj]
+        }
+        nr_root <- function (interval, fn, gr, n, tol = 0.001, iter = 100L) {
+            subjs <- seq_len(n)
+            Low <- interval[1L]
+            Upp <- interval[2L]
+            low <- rep(Low, n)
+            upp <- rep(Upp, n)
+            fn_Low <- fn(low, subjs, 32)
+            fn_Upp <- fn(upp, subjs, 32)
+            simulated_times <- numeric(n)
+            negUpp <- fn_Upp < 0
+            simulated_times[negUpp] <- Upp
+            converged <- vector("logical", n)
+            converged[negUpp] <- TRUE
+            subjs <- subjs[!negUpp]
+            low <- low[!negUpp]
+            upp <- upp[!negUpp]
+            fn_Low <- fn_Low[!negUpp]
+            fn_Upp <- fn_Upp[!negUpp]
+            tt <- tt_old <- rep((Low + Upp) / 2, length(subjs))
+            ffn <- fn(tt, subjs, 18)
+            ggr <- exp(gr(tt, subjs))
+            for (i in seq_len(iter)) {
+                # check convergence
+                check <- abs(ffn) < tol
+                simulated_times[subjs[check]] <- tt[check]
+                converged[subjs[check]] <- TRUE
+                if (all(converged)) break
+                subjs <- subjs[!check]
+                tt <- tt[!check]
+                tt_old <- tt_old[!check]
+                low <- low[!check]
+                upp <- upp[!check]
+                ffn <- ffn[!check]
+                ggr <- ggr[!check]
+                fn_Low <- fn_Low[!check]
+                fn_Upp <- fn_Upp[!check]
+                # propose new value using Newton-Raphson
+                tt <- tt - ffn / ggr
+                out_of_int <- tt < Low | tt > Upp
+                if (any(out_of_int)) {
+                    tt[out_of_int] <- (low[out_of_int] + upp[out_of_int]) / 2
+                }
+                ffn <- fn(tt, subjs, 18)
+                ggr <- exp(gr(tt, subjs))
+                ind1 <- ffn < 0 & ffn > fn_Low
+                fn_Low[ind1] <- ffn[ind1]
+                low[ind1] <- tt[ind1]
+                ind2 <- ffn > 0 & ffn < fn_Upp
+                fn_Upp[ind2] <- ffn[ind2]
+                upp[ind2] <- tt[ind2]
+                simulated_times[subjs] <- tt
+            }
+            simulated_times
+        }
+        valT <- eventT <- matrix(0.0, n, nsim)
+        indices <- sample(nrow(mcmc_betas[[1]]), nsim)
+        for (j in seq_len(nsim)) {
+            jj <- indices[j]
+            betas <- lapply(mcmc_betas, function (x) x[jj, ])
+            bb <- if (length(random_effects) == 1L && is.character(random_effects)) {
+                switch(random_effects,
+                       "mcmc" = mcmc_b[, , jj],
+                       "posterior_means" = b,
+                       "prior" = MASS::mvrnorm(n, rep(0, ncz), mcmc_D[, , jj]))
+            } else {
+                random_effects[, , j]
+            }
+            bs_gammas <- mcmc_bs_gammas[jj, ]
+            if (has_gammas) gammas <- mcmc_gammas[jj, ]
+            alphas <- mcmc_alphas[jj, ]
+            Wlong_std_alphas <- mcmc_Wlong_std_alphas[jj, ]
+            W_std_gammas <- mcmc_W_std_gammas[jj, ]
+            rescale_factor <- Wlong_std_alphas + W_std_gammas
+            Up <- max(Times) * 1.05
+            log_u <- log(runif(n))
+            rep_Times <- nr_root(c(0, Up), invS, log_hazard, n,
+                                 tol = tol, iter = iter)
+            valT[, j] <- rep_Times
+            eventT[, j] <- as.numeric(rep_Times < Up)
+        }
+        colnames(valT) <- colnames(eventT) <- paste0("sim_", seq_len(nsim))
+        val <- list(Times = valT, event = eventT)
+        if (include_outcome) {
+            val <- c(val, outcome = list("Times" = Times, "event" = event))
+        }
     }
-    names(valY) <- paste0("sim_", seq_len(nsim))
-    attr(valY, "seed") <- RNGstate
-    valY
+    attr(val, "seed") <- RNGstate
+    val
+}
+
+ppcheck <- function (object, nsim = 40L, newdata = NULL, seed = 123L,
+                     process = c("longitudinal", "event", "joint"),
+                     type = c("ecdf", "average-evolution", "variance-function",
+                              "variogram", "surv-uniform"),
+                     CI_ecdf = c("none", "binomial", "Dvoretzky-Kiefer-Wolfowitz"),
+                     CI_loess = FALSE,
+                     outcomes = Inf, percentiles = c(0.025, 0.975),
+                     random_effects = c("posterior_means", "mcmc", "prior"),
+                     params_mcmc = NULL, Fforms_fun = NULL, plot = TRUE,
+                     add_legend = TRUE, pos_legend = c("bottomright", "right"),
+                     main = "", xlab = NULL, ylab = NULL,
+                     col_obs = "black", col_rep = "lightgrey", lty_obs = 1,
+                     lty_rep = 1, lwd_obs = 1.5, lwd_rep = 1, line_main = NA,
+                     cex.main = 1.2, ylim = NULL, ...) {
+    process <- match.arg(process)
+    type <- match.arg(type)
+    CI_ecdf <- match.arg(CI_ecdf)
+    trapezoid_rule <- function (f, x) {
+        sum(0.5 * diff(x) * (f[-length(x)] + f[-1L]))
+    }
+    bind <- function (sims) {
+        Cbind <- function (x1, x2) {
+            if (is.matrix(x1)) rbind(x1, x2) else c(x1, x2)
+        }
+        out <- sims[[1L]]
+        for (i in seq_along(sims)[-1L]) {
+            out_i <- sims[[i]]
+            for (j in seq_along(out)) {
+                if (is.list(out[[j]])) {
+                    for (k in seq_along(out[[j]])) {
+                        tt <- c(attr(out[[j]][[k]], "times"),
+                                attr(out_i[[j]][[k]], "times"))
+                        ii <- c(attr(out[[j]][[k]], "id"),
+                                attr(out_i[[j]][[k]], "id"))
+                        out[[j]][[k]] <- Cbind(out[[j]][[k]], out_i[[j]][[k]])
+                        attr(out[[j]][[k]], "times") <- tt
+                        attr(out[[j]][[k]], "id") <- ii
+                    }
+                } else out[[j]] <- Cbind(out[[j]], out_i[[j]])
+            }
+        }
+        out
+    }
+    if (process == "longitudinal") {
+        list_of_jms <- inherits(object, 'list') && inherits(object[[1L]], 'jm') &&
+            inherits(newdata, 'list')
+        out <- if (list_of_jms) {
+            sims_per_fold <- if (is.null(params_mcmc)) {
+                mapply2(simulate, object = object, newdata = newdata,
+                        MoreArgs = list(process = "longitudinal",
+                                        include_outcome = TRUE,
+                                        random_effects = random_effects,
+                                        seed = seed, nsim = nsim,
+                                        Fforms_fun = Fforms_fun))
+            } else {
+                mapply2(simulate, object = object, newdata = newdata,
+                        params_mcmc = params_mcmc,
+                        MoreArgs = list(process = "longitudinal",
+                                        include_outcome = TRUE,
+                                        random_effects = random_effects,
+                                        seed = seed, nsim = nsim,
+                                        Fforms_fun = Fforms_fun))
+            }
+            bind(sims_per_fold)
+        } else {
+            simulate(object, nsim = nsim, newdata = newdata,
+                     process = "longitudinal", include_outcome = TRUE,
+                     random_effects = random_effects, params_mcmc = params_mcmc,
+                     seed = seed, Fforms_fun = Fforms_fun)
+        }
+        yy <- out$outcome
+        out <- out[names(out) != "outcome"]
+        n_outcomes <- length(out)
+        index <- seq_len(n_outcomes)
+        if (outcomes < Inf) index <- index[index %in% outcomes]
+        nindex <- length(index)
+        plot_values <- if (plot) vector("list", nindex)
+        if (is.null(xlab)) {
+            xlab <- if (type == "ecdf") {
+                    if (list_of_jms) object[[1L]]$model_info$var_names$respVars_form
+                else object$model_info$var_names$respVars_form
+                } else
+                switch(type, 'average-evolution' = ,
+                       'variance-function' = 'Follow-up Time',
+                       'variogram' = 'Time Lags')
+        }
+        if (is.null(ylab)) {
+            ylab <- if (type == "ecdf") "Empirical CDF" else
+                switch(type, 'average-evolution' = 'Average Evolution',
+                       'variance-function' =  expression(sqrt(abs("Std. Residuals"))),
+                       'variogram' = 'Half Squared Differences')
+        }
+        xlab <- rep(xlab, length.out = nindex)
+        ylab <- rep(ylab, length.out = nindex)
+        main <- rep(main, length.out = nindex)
+        for (j in index) {
+            jj <- match(j, unique(index))
+            if (type == "ecdf") {
+                y <- yy[[j]]
+                r1 <- quantile(y, probs = percentiles[1L], na.rm = TRUE)
+                r2 <- quantile(y, probs = percentiles[2L], na.rm = TRUE)
+                x_vals <- seq(r1, r2, length.out = 600)
+                rep_y <- apply(out[[j]], 2L, function (x, x_vals) ecdf(x)(x_vals),
+                               x_vals = x_vals)
+                F0 <- ecdf(y)
+                F0 <- F0(x_vals)
+                if (CI_ecdf == "binomial") {
+                    se <- sqrt(F0 * (1 - F0) / length(y))
+                    F0u <- pmin(F0 + 1.959964 * se, 1)
+                    F0l <- pmax(F0 - 1.959964 * se, 0)
+                } else {
+                    # Dvoretzky–Kiefer–Wolfowitz inequality
+                    # https://stats.stackexchange.com/questions/181724/confidence-intervals-for-ecdf
+                    eps <- sqrt(log(2 / 0.05) / (2 * length(y)))
+                    F0u <- pmin(F0 + eps, 1)
+                    F0l <- pmax(F0 - eps, 0)
+                }
+                MISE <- mean(apply((rep_y - F0)^2, 2L, trapezoid_rule, x = x_vals))
+                rootMISE <- round(sqrt(MISE), 5)
+                if (plot) {
+                    if (is.null(ylim)) {
+                        yylim <- c(0, min(1, max(rep_y, F0u) + 0.1))
+                    } else yylim <- ylim
+                    matplot(x_vals, rep_y, type = "s", lty = lty_rep, lwd = lwd_rep,
+                            col = col_rep, xlab = xlab[jj], ylab = ylab[jj],
+                            ylim = yylim, ...)
+                    title(main = main[jj], line = line_main, cex.main = cex.main)
+                    lines(x_vals, F0, type = "s", lwd = lwd_obs, lty = lty_obs, col = col_obs)
+                    if (CI_ecdf != "none") {
+                        lines(x_vals, F0l, type = "s", lwd = lwd_obs, lty = 2, col = col_obs)
+                        lines(x_vals, F0u, type = "s", lwd = lwd_obs, lty = 2, col = col_obs)
+                    }
+                    if (add_legend) {
+                        if (!is.na(pos_legend[1L])) {
+                            if (CI_ecdf != "none") {
+                                legend(pos_legend[1L],
+                                       legend = c("replicated data", "observed data", "95% CI"),
+                                       lty = c(1, 1, 2), col = c(col_rep, col_obs, col_obs),
+                                       bty = "n", cex = 0.9)
+                            } else {
+                                legend(pos_legend[1L],
+                                       legend = c("replicated data", "observed data"),
+                                       lty = c(1, 1), col = c(col_rep, col_obs),
+                                       bty = "n", cex = 0.9)
+
+                            }
+                        }
+                        if (!is.na(pos_legend[2L])) {
+                            legend(pos_legend[2L], bty = "n",
+                                   legend = bquote(sqrt(MISE) == .(rootMISE)))
+                        }
+                    }
+                } else {
+                    plot_values[[jj]] <-
+                        list(x_vals = x_vals, obs = F0, obs_low = F0l,
+                             obs_upp = F0u, rep = rep_y,
+                             rootMISE = if (add_legend) rootMISE)
+                }
+            } else {
+                loess.smooth2 <- function (x, y) {
+                    loess.smooth(x, y, degree = 2, span = 0.75,
+                                 family = "gaussian", evaluation = 200)
+                }
+                gof_fun <- function (y, times, id, type) {
+                    if (type == "variogram") {
+                        ls <- loess.smooth2(times, y)
+                        ind <- findInterval(times, ls$x)
+                        rr <- y - ls$y[ind]
+                        variogram(rr, times, id)[[1L]]
+                    } else if (type == "variance-function") {
+                        ls <- loess.smooth2(times, y)
+                        ind <- findInterval(times, ls$x)
+                        rr <- y - ls$y[ind]
+                        sigma <- sqrt(sum(rr * rr) / (length(rr) - 5.35))
+                        rr <- sqrt(abs(rr / sigma))
+                        cbind(times, rr)
+                    } else {
+                        cbind(times, y)
+                    }
+                }
+                y <- yy[[j]]
+                X <- attr(y, "X")
+                tt <- attr(y, "times")
+                id <- attr(y, "id")
+                DF <- gof_fun(y, tt, id, type)
+                obs_loess <- loess.smooth2(DF[, 1L], DF[, 2L])
+                if (CI_loess) {
+                    loess_fit <-
+                        loess(y ~ x, data.frame(x = DF[, 1L], y = DF[, 2L]),
+                              defree = 2, span = 0.75, family = "gaussian")
+                    preds <- predict(loess_fit, data.frame(x = obs_loess$x),
+                                     se = TRUE)
+                    low <- preds$fit + qt(0.025, preds$df) * preds$se.fit
+                    upp <- preds$fit + qt(0.975, preds$df) * preds$se.fit
+                }
+                rep_loess <- matrix(0, length(obs_loess$y), ncol(out[[j]]))
+                for (i in seq_len(ncol(out[[j]]))) {
+                    not_na <- !is.na(out[[j]][, i])
+                    DF <- gof_fun(out[[j]][not_na, i], tt[not_na], id[not_na], type)
+                    loess_rep_i <- loess.smooth2(DF[, 1L], DF[, 2L])
+                    rep_loess[, i] <- loess_rep_i$y
+                }
+                MISE <- mean(apply((rep_loess - obs_loess$y)^2, 2L,
+                                   trapezoid_rule, x = obs_loess$x))
+                rootMISE <- round(sqrt(MISE), 5)
+                if (plot) {
+                    if (is.null(ylim)) {
+                        yylim <- range(obs_loess$y, rep_loess)
+                    } else yylim <- ylim
+                    if (CI_loess) yylim <- range(yylim, low, upp)
+                    matplot(obs_loess$x, rep_loess, type = "l", col = col_rep,
+                            lty = lty_rep, lwd = lwd_rep, ylim = yylim,
+                            xlab = xlab[jj], ylab = ylab[jj], ...)
+                    title(main = main[jj], line = line_main, cex.main = cex.main)
+                    lines(obs_loess, lwd = lwd_obs, lty = lty_obs, col = col_obs)
+                    if (CI_loess) {
+                        lines(obs_loess$x, low, lwd = lwd_obs, lty = 2, col = col_obs)
+                        lines(obs_loess$x, upp, lwd = lwd_obs, lty = 2, col = col_obs)
+                    }
+                    if (add_legend) {
+                        if (!is.na(pos_legend[1L])) {
+                            if (CI_loess) {
+                                legend(pos_legend[1L],
+                                       legend = c("replicated data", "observed data",
+                                                  "95% CI"), lty = c(1, 1, 2),
+                                       col = c(col_rep, col_obs, col_obs), bty = "n",
+                                       cex = 0.9)
+                            } else {
+                                legend(pos_legend[1L],
+                                       legend = c("replicated data", "observed data"),
+                                       lty = c(1, 1), col = c(col_rep, col_obs),
+                                       bty = "n", cex = 0.9)
+                            }
+                        }
+                        if (!is.na(pos_legend[2L])) {
+                            legend(pos_legend[2L], bty = "n",
+                                   legend = bquote(sqrt(MISE) == .(rootMISE)))
+                        }
+                    }
+                } else {
+                    plot_values[[jj]] <-
+                        list(x_vals = obs_loess$x, obs = obs_loess$y,
+                             obs_low = if (CI_loess) low,
+                             obs_upp = if (CI_loess) upp, rep = rep_loess,
+                             rootMISE = if (add_legend) rootMISE)
+                }
+            }
+        }
+    } else if (process == "event") {
+        out <- if (inherits(object, 'list') && inherits(object[[1L]], 'jm') &&
+                   inherits(newdata, 'list')) {
+            sims_per_fold <- if (is.null(params_mcmc)) {
+                mapply2(simulate, object = object, newdata = newdata,
+                        MoreArgs = list(process = "event",
+                                        include_outcome = TRUE,
+                                        Fforms_fun = Fforms_fun,
+                                        random_effects = random_effects,
+                                        seed = seed, nsim = nsim))
+            } else {
+                mapply2(simulate, object = object, newdata = newdata,
+                        params_mcmc = params_mcmc,
+                        MoreArgs = list(process = "event",
+                                        include_outcome = TRUE,
+                                        Fforms_fun = Fforms_fun,
+                                        random_effects = random_effects,
+                                        seed = seed, nsim = nsim))
+            }
+            bind(sims_per_fold)
+        } else {
+            simulate(object, nsim = nsim, newdata = newdata,
+                     process = "event", seed = seed, include_outcome = TRUE,
+                     random_effects = random_effects, params_mcmc = params_mcmc,
+                     Fforms_fun = Fforms_fun)
+        }
+        Times <- out$outcome.Times
+        event <- out$outcome.event
+        out <- out[names(out) != "outcome"]
+        if (type == "ecdf") {
+            r2 <- quantile(Times, probs = percentiles[2L], na.rm = TRUE)
+            x_vals <- seq(0, r2, length.out = 500)
+            rep_T <- apply(out$Times, 2L, function (x, x_vals) ecdf(x)(x_vals),
+                           x_vals = x_vals)
+            ss <- summary(survfit(Surv(Times, event) ~ 1), times = x_vals)
+            F0 <- 1 - ss$surv
+            F0_low <- 1 - ss$lower
+            F0_upp <- 1 - ss$upper
+            MISE <- mean(apply((rep_T - F0)^2, 2L, trapezoid_rule, x = x_vals))
+            rootMISE <- round(sqrt(MISE), 5)
+            if (is.null(xlab)) xlab <- "Event Times"
+            if (is.null(ylab)) ylab <- "Empirical CDF"
+            if (plot) {
+                if (is.null(ylim)) {
+                    yylim <- c(0, min(1, max(rep_T, F0_upp) + 0.1))
+                } else yylim <- ylim
+                matplot(x_vals, rep_T, type = "s", lty = lty_rep, lwd = lwd_rep,
+                        col = col_rep, xlab = xlab, ylab = ylab, ylim = yylim, ...)
+                title(main = main, line = line_main, cex.main = cex.main)
+                lines(x_vals, F0, type = "s", lwd = lwd_obs, lty = lty_obs, col = col_obs)
+                if (CI_ecdf != "none") {
+                    lines(x_vals, F0_low, type = "s", lwd = lwd_obs, lty = 2, col = col_obs)
+                    lines(x_vals, F0_upp, type = "s", lwd = lwd_obs, lty = 2, col = col_obs)
+                }
+                if (add_legend) {
+                    if (!is.na(pos_legend[1L])) {
+                        if (CI_ecdf != "none") {
+                            legend(pos_legend[1L],
+                                   legend = c("replicated data", "observed data", "95% CI"),
+                                   lty = c(1, 1, 2), col = c(col_rep, col_obs, col_obs),
+                                   bty = "n", cex = 0.9)
+                        } else {
+                            legend(pos_legend[1L],
+                                   legend = c("replicated data", "observed data"),
+                                   lty = c(1, 1), col = c(col_rep, col_obs),
+                                   bty = "n", cex = 0.9)
+                        }
+                    }
+                    if (!is.na(pos_legend[2L])) {
+                        legend(pos_legend[2L], bty = "n",
+                               legend = bquote(sqrt(MISE) == .(rootMISE)))
+                    }
+                }
+            } else {
+                plot_values <-
+                    list(x_vals = x_vals, obs = F0, obs_low = F0_low,
+                         obs_upp = F0_upp, rep = rep_T,
+                         rootMISE = if (add_legend) rootMISE)
+            }
+        } else {
+            DD <- data.frame(event = event)
+            DD$S <- mapply(function (sims, times) ecdf(sims)(times),
+                           sims = split(out$Times, row(out$Times)),
+                           times = Times)
+            KM <- survfit(Surv(S, event) ~ 1, data = DD)
+            plot(KM, xlab = "empirical CDF at event times",
+                 ylab = "Pr(U <= u)", main = main, fun = "event",
+                 cex.main = cex.main, ...)
+            xx <- seq(0, 1, length.out = 101)
+            lines(xx, xx, lwd = 2, col = "red")
+            if (add_legend) {
+                legend("topleft", c("Kaplan-Meier transformed values",
+                                    "CDF uniform"),
+                       lty = 1, lwd = 2, col = c(1, 2), bty = "n")
+            }
+        }
+    } else {
+        list_of_jms <- inherits(object, 'list') && inherits(object[[1L]], 'jm') &&
+            inherits(newdata, 'list')
+        outY <- if (list_of_jms) {
+            sims_per_fold <- if (is.null(params_mcmc)) {
+                mapply2(simulate, object = object, newdata = newdata,
+                        MoreArgs = list(process = "longitudinal",
+                                        include_outcome = TRUE,
+                                        random_effects = random_effects,
+                                        return_random_effects = TRUE,
+                                        seed = seed, nsim = nsim,
+                                        Fforms_fun = Fforms_fun))
+            } else {
+                mapply2(simulate, object = object, newdata = newdata,
+                        params_mcmc = params_mcmc,
+                        MoreArgs = list(process = "longitudinal",
+                                        include_outcome = TRUE,
+                                        random_effects = random_effects,
+                                        return_random_effects = TRUE,
+                                        seed = seed, nsim = nsim,
+                                        Fforms_fun = Fforms_fun))
+            }
+            bind(sims_per_fold)
+        } else {
+            simulate(object, nsim = nsim, newdata = newdata,
+                     process = "longitudinal", include_outcome = TRUE,
+                     random_effects = random_effects, params_mcmc = params_mcmc,
+                     return_random_effects = TRUE,
+                     seed = seed, Fforms_fun = Fforms_fun)
+        }
+        outT <- if (inherits(object, 'list') && inherits(object[[1L]], 'jm') &&
+                   inherits(newdata, 'list')) {
+            sims_per_fold <- if (is.null(params_mcmc)) {
+                mapply2(simulate, object = object, newdata = newdata,
+                        MoreArgs = list(process = "event",
+                                        include_outcome = TRUE,
+                                        Fforms_fun = Fforms_fun,
+                                        random_effects = attr(outY[[1L]], "RE"),
+                                        seed = seed, nsim = nsim))
+            } else {
+                mapply2(simulate, object = object, newdata = newdata,
+                        params_mcmc = params_mcmc,
+                        MoreArgs = list(process = "event",
+                                        include_outcome = TRUE,
+                                        Fforms_fun = Fforms_fun,
+                                        random_effects = attr(outY[[1L]], "RE"),
+                                        seed = seed, nsim = nsim))
+            }
+            bind(sims_per_fold)
+        } else {
+            simulate(object, nsim = nsim, newdata = newdata,
+                     process = "event", seed = seed, include_outcome = TRUE,
+                     random_effects = attr(outY[[1L]], "RE"),
+                     params_mcmc = params_mcmc, Fforms_fun = Fforms_fun)
+        }
+        Y <- outY$outcome
+        n_outcomes <- length(Y)
+        index <- seq_len(n_outcomes)
+        if (outcomes < Inf) index <- index[index %in% outcomes]
+        nindex <- length(index)
+        id <- lapply(Y, function (x) attr(x, "id"))
+        times <- lapply(Y, function (x) attr(x, "times"))
+        outY <- outY[names(outY) != "outcome"]
+        Time <- outT$outcome.Times
+        event <- outT$outcome.event
+        outT <- outT[names(outT) != "outcome"]
+        for (j in seq_len(n_outcomes)) {
+            id_j <- id[[j]]
+            times_j <- times[[j]]
+            f <- function (t, T) {t[t > T] <- NA; t}
+            for (m in seq_len(ncol(outT$Times))) {
+                nas <- is.na(unlist(mapply2(f, t = split(times_j, id_j),
+                                            T = outT$Times[, m])))
+                outY[[j]][nas, m] <- NA_real_
+            }
+        }
+        association <- function (Time, event, Y, times, id, Uno = FALSE) {
+            n_outcomes <- length(Y)
+            YY <- mapply2(split, Y, id)
+            ttimes <- mapply2(split, times, id)
+            unq_eventTimes <- c(0, sort(unique(Time[event == 1])))
+            unq_eventTimes <- unq_eventTimes[unq_eventTimes < quantile(unq_eventTimes, 0.95)]
+            f <- function (y, t, t0) {
+                if (all(t > t0)) NA else y[max(which((t - t0) <= 0), na.rm = TRUE)]
+            }
+            Cs <- matrix(0, length(unq_eventTimes), n_outcomes)
+            for (i in seq_along(unq_eventTimes)) {
+                t0 <- unq_eventTimes[i]
+                for (j in seq_len(n_outcomes)) {
+                    DF <- data.frame(Time = Time, event = event)
+                    DF[["Y"]] <-
+                        mapply(f, y = YY[[j]], t = ttimes[[j]],
+                               MoreArgs = list(t0 = t0))
+                    DF <- DF[!is.na(DF[["Y"]]), ]
+                    DF$lp <- coxph(Surv(Time, event) ~ Y, data = DF)$linear.predictors
+                    Cs[i, j] <- if (Uno) {
+                        survC1::Est.Cval(cbind(DF$Time, DF$event, DF$lp),
+                                         max(Time) - 0.001, nofit = TRUE)$Dhat
+                    } else {
+                        concordance(Surv(Time, event) ~ lp, data = DF,
+                                    reverse = TRUE)$concordance
+                    }
+                }
+            }
+            lapply(seq_len(n_outcomes), function (j)
+                cbind(unq_eventTimes, C = Cs[, j]))
+        }
+        loess.smooth2 <- function (x, y) {
+            loess.smooth(x, y, degree = 1, span = 0.75,
+                         family = "gaussian", evaluation = 200)
+        }
+        C <- association(Time, event, Y, times, id, TRUE)
+        Obs <- mapply2(loess.smooth2, x = lapply(C, function (c) c[, 1L]),
+                       y = lapply(C, function (c) c[, 2L]))
+        if (CI_loess) {
+            low <- upp <- vector("list", n_outcomes)
+            for (j in seq_len(n_outcomes)) {
+                loess_fit <-
+                    loess(y ~ x, data = data.frame(x = C[[j]][, 1L], y = C[[j]][, 2L]),
+                          degree = 1L, span = 0.75, family = "gaussian")
+                preds <- predict(loess_fit, data.frame(x = Obs[[j]]$x), se = TRUE)
+                low[[j]] <- preds$fit + qt(0.025, preds$df) * preds$se.fit
+                upp[[j]] <- preds$fit + qt(0.975, preds$df) * preds$se.fit
+            }
+        }
+        Rep <- vector("list", ncol(outY[[1L]]))
+        for (m in seq_along(Rep)) {
+            C_m <- association(outT$Times[, m], outT$event[, m],
+                               lapply(outY, function (y) y[, m]),
+                               times, id)
+            Rep[[m]] <-
+                mapply2(loess.smooth2, x = lapply(C_m, function (c) c[, 1L]),
+                        y = lapply(C_m, function (c) c[, 2L]))
+        }
+        MISE <- numeric(n_outcomes)
+        for (j in seq_len(n_outcomes)) {
+            Obs_j <- Obs[[j]]
+            Rep_j <- lapply(Rep, function (x) x[[j]])
+            MISE[j] <- mean(sapply(Rep_j, function (r, o)
+                trapezoid_rule((r$y - o$y)^2, o$x), o = Obs_j))
+        }
+        rootMISE <- round(sqrt(MISE), 5)
+        if (plot) {
+            if (is.null(xlab)) xlab <- "Event Times"
+            if (is.null(ylab)) ylab <- "Concordance"
+            xlab <- rep(xlab, length.out = nindex)
+            ylab <- rep(ylab, length.out = nindex)
+            main <- rep(main, length.out = nindex)
+            for (j in index) {
+                jj <- match(j, index)
+                rx <- range(c(sapply(Rep, function (loe) loe[[j]]$x), Obs[[j]]$x))
+                ry <- range(c(sapply(Rep, function (loe) loe[[j]]$y), Obs[[j]]$y))
+                if (CI_loess) {
+                    ry <- range(ry, low[[j]], upp[[j]])
+                }
+                if (is.null(ylim)) {
+                    yylim <- ry
+                } else yylim <- ylim
+                plot(rx, ry, type = "n", xlab = xlab[jj], ylab = ylab[jj],
+                     main = main[jj], cex.main = cex.main, ylim = yylim, ...)
+                for (i in seq_along(Rep)) {
+                    lines(Rep[[i]][[j]], col = col_rep, lty = lty_rep, lwd = lwd_rep)
+                }
+                lines(Obs[[j]], col = col_obs, lty = lty_obs, lwd = lwd_obs)
+                if (CI_loess) {
+                    lines(Obs[[j]]$x, low[[j]], lwd = lwd_obs, lty = 2, col = col_obs)
+                    lines(Obs[[j]]$x, upp[[j]], lwd = lwd_obs, lty = 2, col = col_obs)
+                }
+                if (add_legend) {
+                    if (!is.na(pos_legend[1L])) {
+                        if (CI_loess) {
+                            legend(pos_legend[1L],
+                                   legend = c("replicated data", "observed data", "95% CI"),
+                                   lty = c(1, 1, 2), col = c(col_rep, col_obs, col_obs),
+                                   bty = "n", cex = 0.9)
+                        } else {
+                            legend(pos_legend[1L],
+                                   legend = c("replicated data", "observed data"),
+                                   lty = c(1, 1), col = c(col_rep, col_obs),
+                                   bty = "n", cex = 0.9)
+                        }
+                    }
+                    if (!is.na(pos_legend[2L])) {
+                        legend(pos_legend[2L], bty = "n",
+                               legend = bquote(sqrt(MISE) == .(rootMISE[j])))
+                    }
+                }
+            }
+        } else {
+            plot_values <-
+                list(x_vals = Obs, obs = Obs,
+                     obs_low = if (CI_loess) low,
+                     obs_upp = if (CI_loess) upp, rep = Rep,
+                     rootMISE = if (add_legend) NA)
+        }
+    }
+    if (!plot) return(plot_values)
+}
+
+# nlme::lme() / survival::coxph() do not dispatch on the class of the `data` argument.
+# We define our own S3 generics that dispatch on `data` (2nd argument),
+# so that lme.sliced_data() / mixed_model.sliced_data() / coxph.sliced_data()
+# are used when `data` is `sliced_data`, while nlme::lme() /
+# GLMMadaptive::mixed_model() / survival::coxph() are used for `data.frame`
+lme <- function (fixed, data, ...) UseMethod ("lme", data)
+mixed_model <- function (fixed, data, ...) UseMethod ("mixed_model", data)
+coxph <- function (formula, data, ...) UseMethod ("coxph", data)
+jm <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
+                functional_forms = NULL, which_independent = NULL,
+                base_hazard = NULL, data_Surv = NULL, id_var = NULL,
+                priors = NULL, control = NULL, ...) {
+  UseMethod ("jm", Surv_object)
+}
+
+# We cannot implement coxph.data.frame() as a simple forwarder like
+# coxph.data.frame <- function (formula, data, ...) {
+#   survival::coxph(formula = formula, data = data, ...)
+# }
+# because the resulting coxph object will typically store the call with
+# `object$call$data` as `data`, where `data` is just the argument name of this
+# method, not the original expression supplied by the user (e.g., `pbc2.id`).
+# Later when jm() tries to recover the survival dataset via
+# `eval(Surv_object$call$data, parent.frame())`, if `object$call$data` is `data`,
+# jm() may end up evaluating whatever object is named `data` in the environment.
+# For this reason, we reconstruct the call using match.call() and evaluate it in the
+# parent frame, so object$call$data retains the original expression (e.g., `pbc2.id`).
+coxph.default <- function (formula, data, ...) {
+  mc <- match.call(expand.dots = TRUE)
+  mc[[1L]] <- quote(survival::coxph)
+  eval(mc, parent.frame())
+}
+
+lme.default <- function (fixed, data, random, ...) {
+  mc <- match.call(expand.dots = TRUE)
+  mc[[1L]] <- quote(nlme::lme)
+  eval(mc, parent.frame())
+}
+
+mixed_model.default <- function (fixed, data, random, ...) {
+  mc <- match.call(expand.dots = TRUE)
+  mc[[1L]] <- quote(GLMMadaptive::mixed_model)
+  eval(mc, parent.frame())
+}
+
+slapply <- function (X, FUN, ..., parallel = TRUE, ncores = NULL,
+                     pkgs = NULL, backend = c("auto", "multicore", "snow")) {
+  backend <- match.arg(backend)
+
+  if (is.null(ncores)) ncores <- max(1L, parallel::detectCores() - 1L)
+
+  if (!parallel || ncores <= 1) return(lapply(X, FUN, ...))
+
+  if (backend == "auto") {
+    # multicore: parallel::mclapply() uses OS forking (Unix/macOS/Linux only).
+    #            Fast/low overhead because workers are forked copies of the
+    #            current R process. Downside: forking can be fragile if the
+    #            current R session has loaded "native" compiled code (C/C++/Fortran)
+    #            that uses threads internally (e.g., %*%, chol()). In those cases,
+    #            forked workers may hang/crash or behave unpredictably.
+    # snow: PSOCK socket cluster, parallel::makeCluster(), starts fresh R worker
+    #       sessions. Slower startup and more data transfer (packages must be
+    #       loaded on workers), but generally the most robust and cross-platform
+    #       option (Windows/Linux/macOS).
+    backend <- if (.Platform$OS.type == "windows") "snow" else "multicore"
+  }
+
+  if (backend == "multicore") {
+    return(parallel::mclapply(X, FUN, ..., mc.cores = ncores))
+  }
+
+  # backend == "snow"
+  cl <- parallel::makeCluster(ncores, type = "PSOCK")
+  on.exit(parallel::stopCluster(cl), add = TRUE)
+
+  if (!is.null(pkgs)) { # load packages on workers
+    pkgs <- as.character(pkgs)
+    load_pkgs <- function (pkgs) {
+      for (p in pkgs) {
+        suppressPackageStartupMessages(library (p, character.only = TRUE))
+      }
+      NULL
+    }
+    environment(load_pkgs) <- baseenv()
+    parallel::clusterCall(cl, load_pkgs, pkgs = pkgs)
+  }
+
+  parallel::parLapply(cl, X, FUN, ...)
+}
+
+coxph.sliced_data <- function (formula, data, ...,
+                               parallel_out = TRUE, cores = NULL) {
+  dots <- list(...)
+  if (is.null(cores)) cores <- max(1L, parallel::detectCores() - 1L)
+
+  fit  <- function (dt, formula, dots) {
+    args <- c(list(formula = formula, data = dt), dots)
+    do.call(survival::coxph, args)
+  }
+
+  environment(fit) <- new.env(parent = baseenv()) # Detach fit from the parent call frame so it doesn't accidentally serialize large objects (i.e., the full `data` list) when sent to "snow" workers. print(ls(environment(fit)))
+
+  fits <- slapply(X = data, FUN = fit,
+                  formula = formula, dots = dots,
+                  parallel = parallel_out, ncores = cores,
+                  pkgs = "survival")
+
+  class(fits) <- c("sliced_coxph", class(fits))
+  fits
+}
+
+lme.sliced_data <- function (fixed, data, random, ...,
+                             parallel_out = TRUE, cores = NULL) {
+  dots <- list(...)
+  if (is.null(cores)) cores <- max(1L, parallel::detectCores() - 1L)
+
+  fit <- function (dt, fixed, random, dots) {
+    args <- c(list(fixed = fixed, data = dt, random = random), dots)
+    do.call(nlme::lme, args)
+  }
+
+  environment(fit) <- new.env(parent = baseenv()) # Detach fit from the parent call frame so it doesn't accidentally serialize large objects (i.e., the full `data` list) when sent to "snow" workers. print(ls(environment(fit)))
+
+  fits <- slapply(X = data, FUN = fit,
+                  fixed = fixed, random = random, dots = dots,
+                  parallel = parallel_out, ncores = cores,
+                  pkgs = "nlme")
+
+  class(fits) <- c("sliced_lme", class(fits))
+  fits
+}
+
+mixed_model.sliced_data <- function (fixed, data, random, ...,
+                                     parallel_out = TRUE, cores = NULL) {
+  dots <- list(...)
+  if (is.null(cores)) cores <- max(1L, parallel::detectCores() - 1L)
+
+  bool1 <- parallel_out && cores > 1L
+  bool2 <- identical(dots$optimizer, "optimParallel") ||
+    (is.list(dots$control) && identical(dots$control$optimizer, "optimParallel")) # identical(NULL, "optimParallel") -> FALSE
+  if (bool1 && bool2) {
+    warning(
+      "'optimParallel' requested, but mixed_model.sliced_data() is already parallel across subsamples; ",
+      "switching optimizer to 'optim' to avoid nested parallelism. ",
+      "To use 'optimParallel', run mixed_model.sliced_data(parallel_out = FALSE).",
+      call. = FALSE
+    )
+    if (identical(dots$optimizer, "optimParallel")) dots$optimizer <- "optim"
+    if (is.list(dots$control) && identical(dots$control$optimizer, "optimParallel")) {
+      dots$control$optimizer <- "optim"
+    }
+  }
+
+  fit <- function (dt, fixed, random, dots) {
+    args <- c(list(fixed = fixed, random = random, data = dt), dots)
+    do.call(GLMMadaptive::mixed_model, args)
+  }
+
+  environment(fit) <- new.env(parent = baseenv()) # Detach fit from the parent call frame so it doesn't accidentally serialize large objects (i.e., the full `data` list) when sent to "snow" workers. print(ls(environment(fit)))
+
+  fits <- slapply(X = data, FUN = fit,
+                  fixed = fixed, random = random, dots = dots,
+                  parallel = parallel_out, ncores = cores,
+                  pkgs = "GLMMadaptive", backend = "snow")
+
+  class(fits) <- c("sliced_MixMod", class(fits))
+  fits
+}
+
+jm.sliced_coxph <- function (Surv_object, Mixed_objects, time_var, ...,
+                             parallel_out = TRUE, cores = NULL) {
+  n_slices <- length(Surv_object)
+  if (is.null(cores)) cores <- max(1L, parallel::detectCores() - 1L)
+
+  dots <- list(...)
+  ctrl <- dots$control
+  if (is.null(ctrl)) ctrl <- list()
+
+  # n_chains: control$n_chains > n_chains > default
+  if (!is.null(ctrl$n_chains)) {
+    n_chains <- ctrl$n_chains
+  } else if (!is.null(dots$n_chains)) {
+    n_chains <- dots$n_chains
+  } else {
+    n_chains <- 3L
+  }
+
+  # inner jm() backend (chains)
+  # parallel: control$parallel > parallel > auto
+  if (is.null(ctrl$parallel) && !is.null(dots$parallel)) ctrl$parallel <- dots$parallel
+  if (is.null(ctrl$parallel)) {
+    ctrl$parallel <- if (.Platform$OS.type == "windows") "snow" else "multicore"
+  }
+  if (identical(ctrl$parallel, "multicore") && .Platform$OS.type == "windows") {
+    warning("control$parallel='multicore' is not available on Windows; using 'snow'.",
+            call. = FALSE)
+    ctrl$parallel <- "snow"
+  }
+
+  inner_ncores <- max(1L, min(n_chains, cores))
+  ctrl$cores <- inner_ncores
+  ctrl$n_chains <- n_chains
+
+  dots[c("n_chains", "cores", "parallel")] <- NULL # Avoid passing control-like args twice.
+  dots$control <- ctrl
+
+  # outer cores (across slices)
+  outer_ncores <- min(n_slices, max(1L, floor(cores / inner_ncores)))
+
+  # Optional: on Windows, avoid nested PSOCK clusters by default
+  # if (.Platform$OS.type == "windows" && inner_ncores > 1L && identical(ctrl$parallel, "snow")) {
+  #   outer_ncores <- 1L
+  # }
+
+  # Detect whether Mixed_objects is:
+  # i)  a sliced object: list of lme/MixMod fits (one per slice)
+  # ii) a list of sliced objects: list(outcome1_sliced, outcome2_sliced, ...) -> transpose
+  if (!inherits(Mixed_objects[[1]], c("lme", "MixMod"))) {
+    Mixed_objects <- lapply(seq_len(n_slices),
+                            function (i) lapply(Mixed_objects, `[[`, i))
+  }
+
+  jobs <- Map(function(S, M) list(Surv_object = S, Mixed_objects = M), # Each worker receives only slice-specific inputs.
+              Surv_object, Mixed_objects)
+
+  fit <- function (job, time_var, dots) {
+    args <- c(list(Surv_object = job$Surv_object,
+                   Mixed_objects = job$Mixed_objects,
+                   time_var = time_var),
+              dots)
+    do.call(JMbayes2::jm, args)
+  }
+
+  environment(fit) <- new.env(parent = baseenv())
+
+  fits <- slapply(X = jobs, FUN = fit,
+                  time_var = time_var, dots = dots,
+                  parallel = parallel_out, ncores = outer_ncores,
+                  pkgs = "JMbayes2", backend = "snow")
+
+  class(fits) <- c("sliced_jm", class(fits))
+  fits
+}
+
+slicer <- function (n_slices, id_var, data_long, data_surv, seed = 123L) {
+  stopifnot(is.numeric(n_slices), length(n_slices) == 1, n_slices >= 1,
+            is.character(id_var))
+  if (!id_var %in% names(data_long)) {
+    stop(paste0("'", id_var, "' not found in data_long."))
+  }
+  if (!id_var %in% names(data_surv)) {
+    stop(paste0("'", id_var, "' not found in data_surv."))
+  }
+  ids_unq <- unique(c(as.character(data_long[[id_var]]),
+                      as.character(data_surv[[id_var]])))
+  if (!is.null(seed)) set.seed(seed)
+  grp <- ((seq_along(ids_unq) - 1) %% n_slices) + 1 # assign each ID a group number 1...n_slices in round-robin order (1,2,...,n_slices,1,2,...)
+  ids_slc <- split(sample(ids_unq), grp)
+  long <- lapply(ids_slc, function (ids) data_long[data_long[[id_var]] %in% ids, ])
+  surv <- lapply(ids_slc, function (ids) data_surv[data_surv[[id_var]] %in% ids, ])
+  class(long) <- c("sliced_data", class(long))
+  class(surv) <- c("sliced_data", class(surv))
+  list(long = long, surv = surv)
+}
+
+consensus <- function (object, parm,
+                       method = c("union", "equal_weight", "var_weight"),
+                       seed = 123L) {
+  stopifnot(inherits(object, "sliced_jm"), is.character(parm), length(parm) >= 1)
+  method <- match.arg(method)
+  get_cons <- function (fits, parm, method) {
+    slice_mats <- lapply(fits, function (x) do.call(rbind, x$mcmc[[parm]])) # list of [iter, p] matrices (one per slice)
+    if (method == "union") {
+      return (list(draws = do.call(rbind, slice_mats), # [iter * slice, p]
+                   weights = NULL))
+    }
+    draws <- simplify2array(slice_mats) # [iter, p, slice]
+    draws <- apply(draws, c(2, 3), sample)
+    ns <- dim(draws)[3]
+    snames <- paste0("S", seq_len(ns)) # slice names
+    pnames <- dimnames(draws)[[2]]
+    if (method == "equal_weight") {
+      w <- matrix(1 / ns, nrow = length(pnames), ncol = ns,
+                  dimnames = list(pnames, snames))
+      return (list(draws = apply(draws, c(1, 2), mean), # [iter, p]
+                   weights = w))
+    }
+    # var_weight
+    vars <- apply(draws, c(2, 3), var) # [p, slice]
+    w <- 1 / pmax(vars, .Machine$double.eps) # [p, slice]
+    w <- sweep(w, 1, rowSums(w), "/") # normalize
+    dimnames(w) <- list(pnames, snames)
+    w_draws <- sweep(draws, c(2, 3), w, "*") # weighted[iter, p, slice] <- draws[iter, p, slice] * w[p, slice]
+    list(draws = apply(w_draws, c(1, 2), sum), weights = w)
+  }
+  if (!is.null(seed)) set.seed(seed)
+  cons_out <- lapply(parm, function (p) get_cons(object, p, method))
+  names(cons_out) <- parm
+  cons_draws <- lapply(cons_out, `[[`, "draws")
+  cons_wts   <- lapply(cons_out, `[[`, "weights")
+  n_draws <- vapply(cons_draws, nrow, integer(1))
+  summarise_draws <- function (draws_mat) {
+    cbind(
+      Mean   = colMeans(draws_mat),
+      StDev  = apply(draws_mat, 2, sd),
+      `2.5%`  = apply(draws_mat, 2, quantile, probs = 0.025, names = FALSE),
+      `97.5%` = apply(draws_mat, 2, quantile, probs = 0.975, names = FALSE),
+      P      = apply(draws_mat, 2, function (x) 2 * min(mean(x > 0), mean(x < 0)))
+    )
+  }
+  cons_sum <- lapply(cons_draws, summarise_draws)
+  res <- list(method = method, parm = parm, n_splits = length(object),
+              draws = cons_draws, weights = cons_wts, n_draws = n_draws,
+              summary = cons_sum, seed = seed)
+  class(res) <- "consensus_jm"
+  res
+}
+
+print.consensus_jm <- function (x, digits = 4, ...) {
+  cat("\nConsensus summary (", x$n_splits, " splits)\n", sep = "")
+  if (identical(x$method, "union")) {
+    cat("Method (union): concatenated draws across splits (no averaging).\n")
+  } else if (identical(x$method, "equal_weight")) {
+    cat("Method (equal_weight): iteration-wise simple average across splits.\n")
+  } else if (identical(x$method, "var_weight")) {
+    cat("Method (var_weight): iteration-wise weighted average across splits using inverse-variance weights.\n")
+  }
+  for (nm in names(x$summary)) {
+    cat("\nParameter block: ", nm,
+        " (", x$n_draws[[nm]], " draws)\n", sep = "")
+    tab <- x$summary[[nm]]
+    w <- x$weights[[nm]]
+    if (!is.null(w)) {
+      w <- w[rownames(tab), , drop = FALSE]
+      colnames(w) <- paste0("w_", colnames(w))
+      tab <- cbind(tab, w)
+    }
+    print(round(tab, digits))
+  }
+  invisible(x)
 }

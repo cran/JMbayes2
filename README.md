@@ -2,13 +2,10 @@
 # JMbayes2: Extended Joint Models for Longitudinal and Time-to-Event Data <img src="man/figures/logo.png" align="right" alt="" width="160" />
 
 <!-- badges: start -->
-
 [![CRAN_Status_Badge](https://www.r-pkg.org/badges/version-last-release/JMbayes2)](https://cran.r-project.org/package=JMbayes2)
-[![](https://cranlogs.r-pkg.org/badges/grand-total/JMbayes2)](https://cran.r-project.org/package=JMbayes2)
-[![Download
-counter](https://cranlogs.r-pkg.org/badges/JMbayes2)](https://cran.r-project.org/package=JMbayes2)
-[![R build
-status](https://github.com/drizopoulos/JMbayes2/workflows/R-CMD-check/badge.svg)](https://github.com/drizopoulos/JMbayes2/actions)
+[![Downloads](https://cranlogs.r-pkg.org/badges/grand-total/JMbayes2)](https://cran.r-project.org/package=JMbayes2)
+[![Download counter](https://cranlogs.r-pkg.org/badges/JMbayes2)](https://cran.r-project.org/package=JMbayes2)
+[![R build status](https://github.com/drizopoulos/JMbayes2/workflows/R-CMD-check/badge.svg)](https://github.com/drizopoulos/JMbayes2/actions)
 <!-- badges: end -->
 
 The package **JMbayes2** fits joint models for longitudinal and
@@ -17,7 +14,7 @@ different type (e.g., continuous, dichotomous, ordinal, counts), and
 assuming different distributions, i.e., Gaussian, Student’s-t, Gamma,
 Beta, unit Lindley, censored Normal, Binomial, Poisson, Negative
 Binomial, and Beta-Binomial. For the event time process, right, left and
-interval censored data can be handled, while competing risks, multi-sate 
+interval censored data can be handled, while competing risks, multi-state 
 and recurrent-event processes are also covered..
 
 **JMbayes2** fits joint models using Markov chain Monte Carlo algorithms

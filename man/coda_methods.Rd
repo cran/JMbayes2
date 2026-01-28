@@ -34,7 +34,7 @@ ggtraceplot(object, \dots)
 \method{ggtraceplot}{jm}(object,
   parm = c("all", "betas", "sigmas", "D", "bs_gammas",
            "tau_bs_gammas", "gammas", "alphas"),
-  size = 1, alpha = 0.8,
+  linewidth = 1, alpha = 0.8,
   theme = c('standard', 'catalog', 'metro',
                 'pastel', 'beach', 'moonlight', 'goo', 'sunset', 'custom'),
   grid = FALSE, gridrows = 3, gridcols = 1, custom_theme = NULL, \dots)
@@ -56,7 +56,7 @@ ggdensityplot(object, \dots)
 \method{ggdensityplot}{jm}(object,
   parm = c("all", "betas", "sigmas", "D", "bs_gammas",
            "tau_bs_gammas", "gammas", "alphas"),
-  size = 1, alpha = 0.6,
+  linewidth = 1, alpha = 0.6,
   theme = c('standard', 'catalog', 'metro', 'pastel',
                 'beach', 'moonlight', 'goo', 'sunset', 'custom'),
   grid = FALSE, gridrows = 3, gridcols = 1, custom_theme = NULL, \dots)
@@ -72,7 +72,7 @@ cumuplot(object, \dots)
 \arguments{
 \item{object}{an object inheriting from class \code{"jm"}.}
 \item{parm}{a character string specifying which parameters of the joint model to plot. Possible options are \code{'all'}, \code{'betas'}, \code{'alphas'}, \code{'sigmas'}, \code{'D'}, \code{'bs_gammas'}, \code{'tau_bs_gammas'}, or \code{'gammas'}.\cr}
-\item{size}{the width of the traceplot line in mm. Defaults to 1.}
+\item{linewidth}{the width of the traceplot line in mm. Defaults to 1.}
 \item{alpha}{the opacity level of the traceplot line. Defaults to 0.8.}
 \item{theme}{a character string specifying the color theme to be used. Possible options are \code{'standard'}, \code{'catalog'}, \code{'metro'}, \code{'pastel'}, \code{'beach'}, \code{'moonlight'}, \code{'goo'}, or \code{'sunset'}. Note that this option supports fitted objects with three chains. If the object was fitted using a different number of chains then the colors are either automatically chosen, or can be specified by the user via the argument \code{custom_theme}. \cr}
 \item{grid}{logical; defaults to \code{FALSE}. If \code{TRUE}, the plots are returned in grids split over multiple pages. For more details see the documentation for \code{\link[gridExtra:arrangeGrob]{gridExtra::marrangeGrob()}}. \cr}

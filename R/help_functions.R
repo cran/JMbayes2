@@ -34,6 +34,11 @@ symm_mat <- function (M) {
     0.5 * (M + t(M))
 }
 
+group_sum <- function (x, ind) {
+    xx <- c(0, cumsum(x)[ind])
+    xx[-1L] - xx[-length(xx)]
+}
+
 extract_terms <- function (object, which = c("fixed", "random"), data) {
     which <- match.arg(which)
     if (inherits(object, "MixMod")) {
@@ -173,7 +178,7 @@ extract_functional_forms <- function (Form, nam, data) {
     M <- model.matrix(tr, mF)
     cnams <- colnames(M)
     possible_forms <- c("value(", "slope(", "area(", "velocity(",
-                        "acceleration(", "coefs(")
+                        "acceleration(", "coefs(", "Delta(")
     possible_forms <- paste0(possible_forms, nam)
     ind <- unlist(lapply(possible_forms, grep, x = cnams, fixed = TRUE))
     M <- M[, cnams %in% cnams[unique(ind)], drop = FALSE]
@@ -221,6 +226,123 @@ gaussKronrod <- function (k = 15L) {
     }
 }
 
+gaussLegendre <- function (k = 15) {
+    if (!k %in% c(15, 16, 17, 18, 19, 20, 32))
+        stop("k should be 15:20 or 32.")
+    out <- if (k == 15) {
+        list(sk = c(0, 0.201194093997435, -0.201194093997435,
+                    0.394151347077563, -0.394151347077563, 0.570972172608539,
+                    -0.570972172608539, 0.72441773136017, -0.72441773136017,
+                    0.848206583410427, -0.848206583410427, 0.937273392400706,
+                    -0.937273392400706, 0.987992518020485, -0.987992518020485),
+             wk = c(0.202578241925561, 0.198431485327112, 0.198431485327112,
+                    0.186161000015562, 0.186161000015562, 0.166269205816994,
+                    0.166269205816994, 0.139570677926154, 0.139570677926154,
+                    0.107159220467172, 0.107159220467172, 0.0703660474881081,
+                    0.0703660474881081, 0.0307532419961173, 0.0307532419961173))
+    }
+    else if (k == 16) {
+        list(sk = c(0.0950125098376374, -0.0950125098376374,
+                    0.281603550779259, -0.281603550779259, 0.458016777657227,
+                    -0.458016777657227, 0.617876244402644, -0.617876244402644,
+                    0.755404408355003, -0.755404408355003, 0.865631202387832,
+                    -0.865631202387832, 0.944575023073233, -0.944575023073233,
+                    0.98940093499165, -0.98940093499165), wk = c(0.189450610455069,
+                                                                 0.189450610455069, 0.182603415044924, 0.182603415044924,
+                                                                 0.169156519395003, 0.169156519395003, 0.149595988816577,
+                                                                 0.149595988816577, 0.124628971255534, 0.124628971255534,
+                                                                 0.0951585116824928, 0.0951585116824928, 0.0622535239386479,
+                                                                 0.0622535239386479, 0.0271524594117541, 0.0271524594117541))
+    }
+    else if (k == 17) {
+        list(sk = c(0, 0.178484181495848, -0.178484181495848,
+                    0.351231763453876, -0.351231763453876, 0.512690537086477,
+                    -0.512690537086477, 0.657671159216691, -0.657671159216691,
+                    0.781514003896801, -0.781514003896801, 0.880239153726986,
+                    -0.880239153726986, 0.950675521768768, -0.950675521768768,
+                    0.990575475314417, -0.990575475314417), wk = c(0.179446470356207,
+                                                                   0.176562705366993, 0.176562705366993, 0.16800410215645,
+                                                                   0.16800410215645, 0.15404576107681, 0.15404576107681,
+                                                                   0.135136368468525, 0.135136368468525, 0.111883847193404,
+                                                                   0.111883847193404, 0.0850361483171792, 0.0850361483171792,
+                                                                   0.0554595293739872, 0.0554595293739872, 0.0241483028685479,
+                                                                   0.0241483028685479))
+    }
+    else if (k == 18) {
+        list(sk = c(0.0847750130417353, -0.0847750130417353,
+                    0.251886225691505, -0.251886225691505, 0.411751161462843,
+                    -0.411751161462843, 0.559770831073948, -0.559770831073948,
+                    0.691687043060353, -0.691687043060353, 0.803704958972523,
+                    -0.803704958972523, 0.892602466497556, -0.892602466497556,
+                    0.955823949571398, -0.955823949571398, 0.991565168420931,
+                    -0.991565168420931), wk = c(0.169142382963144, 0.169142382963144,
+                                                0.164276483745833, 0.164276483745833, 0.154684675126265,
+                                                0.154684675126265, 0.140642914670651, 0.140642914670651,
+                                                0.122555206711478, 0.122555206711478, 0.100942044106287,
+                                                0.100942044106287, 0.0764257302548891, 0.0764257302548891,
+                                                0.0497145488949698, 0.0497145488949698, 0.0216160135264833,
+                                                0.0216160135264833))
+    }
+    else if (k == 19) {
+        list(sk = c(0, 0.160358645640225, -0.160358645640225,
+                    0.31656409996363, -0.31656409996363, 0.464570741375961,
+                    -0.464570741375961, 0.600545304661681, -0.600545304661681,
+                    0.720966177335229, -0.720966177335229, 0.822714656537143,
+                    -0.822714656537143, 0.903155903614818, -0.903155903614818,
+                    0.96020815213483, -0.96020815213483, 0.992406843843584,
+                    -0.992406843843584), wk = c(0.161054449848784, 0.158968843393954,
+                                                0.158968843393954, 0.15276604206586, 0.15276604206586,
+                                                0.142606702173607, 0.142606702173607, 0.128753962539336,
+                                                0.128753962539336, 0.111566645547334, 0.111566645547334,
+                                                0.09149002162245, 0.09149002162245, 0.0690445427376412,
+                                                0.0690445427376412, 0.0448142267656996, 0.0448142267656996,
+                                                0.0194617882297265, 0.0194617882297265))
+    }
+    else if (k == 20) {
+        list(sk = c(0.0765265211334973, -0.0765265211334973,
+                    0.227785851141645, -0.227785851141645, 0.37370608871542,
+                    -0.37370608871542, 0.510867001950827, -0.510867001950827,
+                    0.636053680726515, -0.636053680726515, 0.746331906460151,
+                    -0.746331906460151, 0.839116971822219, -0.839116971822219,
+                    0.912234428251326, -0.912234428251326, 0.963971927277914,
+                    -0.963971927277914, 0.993128599185095, -0.993128599185095),
+             wk = c(0.152753387130726, 0.152753387130726, 0.149172986472604,
+                    0.149172986472604, 0.142096109318382, 0.142096109318382,
+                    0.131688638449177, 0.131688638449177, 0.118194531961518,
+                    0.118194531961518, 0.10193011981724, 0.10193011981724,
+                    0.0832767415767048, 0.0832767415767048, 0.0626720483341091,
+                    0.0626720483341091, 0.0406014298003869, 0.0406014298003869,
+                    0.0176140071391521, 0.0176140071391521))
+    }
+    else {
+        list(sk = c(0.0483076656877383, -0.0483076656877383,
+                    0.144471961582796, -0.144471961582796, 0.239287362252137,
+                    -0.239287362252137, 0.331868602282128, -0.331868602282128,
+                    0.421351276130635, -0.421351276130635, 0.506899908932229,
+                    -0.506899908932229, 0.587715757240762, -0.587715757240762,
+                    0.663044266930215, -0.663044266930215, 0.73218211874029,
+                    -0.73218211874029, 0.794483795967942, -0.794483795967942,
+                    0.84936761373257, -0.84936761373257, 0.896321155766052,
+                    -0.896321155766052, 0.93490607593774, -0.93490607593774,
+                    0.964762255587506, -0.964762255587506, 0.985611511545268,
+                    -0.985611511545268, 0.997263861849482, -0.997263861849482),
+             wk = c(0.0965400885147278, 0.0965400885147278, 0.0956387200792749,
+                    0.0956387200792749, 0.0938443990808046, 0.0938443990808046,
+                    0.0911738786957639, 0.0911738786957639, 0.0876520930044038,
+                    0.0876520930044038, 0.0833119242269467, 0.0833119242269467,
+                    0.0781938957870703, 0.0781938957870703, 0.0723457941088485,
+                    0.0723457941088485, 0.0658222227763618, 0.0658222227763618,
+                    0.0586840934785355, 0.0586840934785355, 0.0509980592623762,
+                    0.0509980592623762, 0.0428358980222267, 0.0428358980222267,
+                    0.0342738629130214, 0.0342738629130214, 0.0253920653092621,
+                    0.0253920653092621, 0.0162743947309057, 0.0162743947309057,
+                    0.0070186100094701, 0.0070186100094701))
+    }
+    ord <- order(out$sk)
+    f <- function(x, ord) x[ord]
+    lapply(out, f, ord = ord)
+}
+
 locf <- function (object, fromLast = FALSE, maxgap = Inf) {
     .fill_short_gaps <- function (x, fill, maxgap) {
         if (maxgap <= 0)
@@ -254,10 +376,14 @@ extract_attributes <- function (form, data) {
     direction <- lapply(mf, function (v, name) attr(v, name), name = "direction")
     zero_ind <- lapply(mf, function (v, name) attr(v, name), name = "zero_ind")
     time_window <- lapply(mf, function (v, name) attr(v, name), name = "time_window")
+    standardise <- lapply(mf, function (v, name) attr(v, name), name = "standardise")
+    IE_time <- lapply(mf, function (v, name) attr(v, name), name = "IE_time") #!! new
     list(eps = eps[!sapply(eps, is.null)],
          direction = direction[!sapply(direction, is.null)],
          zero_ind = zero_ind[!sapply(zero_ind, is.null)],
-         time_window = time_window[!sapply(time_window, is.null)])
+         time_window = time_window[!sapply(time_window, is.null)],
+         standardise = standardise[!sapply(standardise, is.null)],
+         IE_time = IE_time[!sapply(IE_time, is.null)]) #!! new
 }
 
 extract_D <- function (object) {
@@ -278,11 +404,17 @@ knots <- function (xl, xr, ndx, deg) {
     }
 }
 
-knots <- function (xl, xr, ndx, deg) {
-    xl <- 0#xl - 0.001
+knots <- function (x, ndx, deg, basis) {
+    xl <- x[1L]
+    xr <- x[2L]
+    xl <- sqrt(.Machine$double.eps)
     xr <- xr + 0.001
-    kn <- seq(xl, xr, length.out = ndx)
-    c(rep(xl, deg), kn, rep(xr, deg))
+    if (basis == "bs") {
+        kn <- seq(xl, xr, length.out = ndx + 1)
+        c(rep(xl, deg), kn, rep(xr, deg))
+    } else {
+        seq(xl, xr, length.out = ndx + 1)
+    }
 }
 
 extract_b <- function (object, id, n, unq_id) {
@@ -304,31 +436,47 @@ extract_log_sigmas <- function (object) {
     out
 }
 
-value <- function (x) rep(1, NROW(x))
+value <- function (x, IE_time = NULL) { #!! new
+  out <- rep(1, NROW(x))
+  temp <- list(IE_time = IE_time)
+  attributes(out) <- c(attributes(out), temp)
+  out
+}
 vexpit <- Dexpit <- vexp <- Dexp <- function (x) rep(1, NROW(x))
 vabs <- vsqrt <- vlog <- vlog2 <- vlog10 <- function (x) rep(1, NROW(x))
 poly2 <- poly3 <- poly4 <- function (x) rep(1, NROW(x))
-coefs <- function (x, zero_ind = NULL) {
+coefs <- function (x, zero_ind = NULL, IE_time = NULL) { #!! new
     out <- rep(1, NROW(x))
-    temp <- list(zero_ind = zero_ind)
+    temp <- list(zero_ind = zero_ind, IE_time = IE_time)
     attributes(out) <- c(attributes(out), temp)
     out
 }
-slope <- function (x, eps = 0.001, direction = "both") {
+slope <- function (x, eps = 0.001, direction = "both", IE_time = NULL) { #!! new
     out <- rep(1, NROW(x))
-    temp <- list(eps = eps, direction = direction)
+    temp <- list(eps = eps, direction = direction, IE_time = IE_time)
     attributes(out) <- c(attributes(out), temp)
     out
 }
 velocity <- slope
-acceleration <- function (x) rep(1, NROW(x))
-area <- function (x, time_window = NULL) {
+acceleration <- function (x, IE_time = NULL) { #!! new
+  out <- rep(1, NROW(x))
+  temp <- list(IE_time = IE_time)
+  attributes(out) <- c(attributes(out), temp)
+  out
+}
+area <- function (x, time_window = NULL, IE_time = NULL) { #!! new
     out <- rep(1, NROW(x))
-    temp <- list(time_window = time_window)
+    temp <- list(time_window = time_window, IE_time = IE_time)
     attributes(out) <- c(attributes(out), temp)
     out
 }
-
+Delta <- function (x, time_window = NULL, standardise = TRUE, IE_time = NULL) { #!! new
+  out <- rep(1, NROW(x))
+  temp <- list(time_window = time_window, standardise = standardise,
+               IE_time = IE_time)
+  attributes(out) <- c(attributes(out), temp)
+  out
+}
 
 create_HC_X <- function(x, z, id, terms, data) {
     check_tv <- function (x, id) {
@@ -492,7 +640,7 @@ extractFuns_FunForms <- function (Form, nam, data) {
     M <- model.matrix(tr, mF)
     cnams <- colnames(M)
     possible_forms <- c("value(", "slope(", "area(", "velocity(",
-                        "acceleration(", "coefs(")
+                        "acceleration(", "coefs(", "Delta(") #!! new
     possible_forms <- paste0(possible_forms, nam)
     ind <- unlist(lapply(possible_forms, grep, x = cnams, fixed = TRUE))
     M <- M[1, cnams %in% cnams[unique(ind)], drop = FALSE]
@@ -785,18 +933,44 @@ makepredictcall.tv <- function (var, call) {
     x
 }
 
-
-create_W0 <- function (times, knots, ord, strata) {
-    W0 <- lapply(knots, splineDesign, x = times, ord = ord, outer.ok = TRUE)
+create_W0 <- function (times, knots, degree, strata, basis,
+                       timescale_base_hazard) {
+    #times = c(t(st - trunc_Time))
+    #knots = con$knots
+    #degree = con$Bsplines_degree
+    #strata = strata_H
+    #basis = con$basis
+    #timescale_base_hazard = con$timescale_base_hazard
     n_strata <- length(unique(strata))
-    ncW0 <- ncol(W0[[1L]])
-    ind_cols <- matrix(seq_len(ncW0 * n_strata), ncW0)
-    out <- matrix(0.0, nrow(W0[[1L]]), ncW0 * n_strata)
+    W0 <- vector("list", n_strata)
+    for (k in seq_len(n_strata)) {
+        tt <- if (timescale_base_hazard[k] == "identity") times else log(times)
+        W0[[k]] <- if (basis[k] == "bs") {
+            splineDesign(knots[[k]], tt, ord = degree[k] + 1L,
+                         outer.ok = TRUE)
+        } else {
+            kn <- knots[[k]]
+            ns(x = tt, knots = kn[-c(1, length(kn))], intercept = TRUE,
+               Boundary.knots = kn[c(1, length(kn))])
+        }
+    }
+    #W0 <- if (basis == "bs") {
+    #    lapply(knots, splineDesign, x = times, ord = degree + 1L,
+    #           outer.ok = TRUE)
+    #} else {
+    #    lapply(knots, function (kn, times)
+    #        ns(x = times, knots = kn[-c(1, length(kn))], intercept = TRUE,
+    #           Boundary.knots = kn[c(1, length(kn))]), times = times)
+    #}
+    ncW0 <- sapply(W0, ncol)
+    ind_cols <- mapply2(":", c(1, cumsum(ncW0) + 1), c(cumsum(ncW0), 200))
+    out <- matrix(0.0, nrow(W0[[1L]]), sum(ncW0))
     for (i in seq_len(n_strata)) {
         row_inds <- strata == i
-        col_inds <- ind_cols[, i]
+        col_inds <- ind_cols[[i]]
         out[row_inds, col_inds] <- W0[[i]][row_inds, ]
     }
+    attr(out, "ncW0") <- ncW0
     out
 }
 
@@ -811,8 +985,9 @@ construct_Umat <- function (fForms, dataS) {
     ind_velocity <- grep("velocity(", cnams, fixed = TRUE)
     ind_acceleration <- grep("acceleration(", cnams, fixed = TRUE)
     ind_coefs <- grep("coefs(", cnams, fixed = TRUE)
+    ind_Delta <- grep("Delta(", cnams, fixed = TRUE) #!! new
     ind <- unique(c(ind_value, ind_slope, ind_area, ind_velocity,
-                    ind_acceleration, ind_coefs))
+                    ind_acceleration, ind_coefs, ind_Delta)) #!! new
     m[, cnams %in% cnams[ind], drop = FALSE]
 }
 
@@ -1027,65 +1202,108 @@ LongData_HazardModel <- function (times_to_fill, data, times_data, ids,
     data
 }
 
+# time = st; terms = terms_FE_noResp; data = dataL; timeVar = time_var
+# Fun_Forms = collapsed_functional_forms
+
 design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
                                               idT, Fun_Forms, Xbar = NULL, eps,
-                                              direction, zero_ind = NULL, time_window) {
+                                              direction, zero_ind = NULL,
+                                              time_window, standardise, IE_time) { #!! new
     data[] <- lapply(data, function (x) locf(locf(x), fromLast = TRUE))
-    desgn_matr <- function (time, terms, Xbar, zero_ind) {
-        D <- LongData_HazardModel(time, data, data[[timeVar]],
+    desgn_matr <- function (time, terms, Xbar, zero_ind, IE_time) { #!! new
+      f <- function(m, mu, ind) {
+        if (!is.null(mu)) {
+          m <- m - rep(mu, each = nrow(m))
+        }
+        if (length(ind) > 0) {
+          #m[,  ind] <- 0 * m[, ind] #?? to delete
+          #m[, -ind] <- 1 #?? to delete
+          m[,  ind, drop = FALSE] <- 0
+          m[, -ind, drop = FALSE] <- 1
+          }
+        m
+      }
+      if (all(!lengths(IE_time))) {
+        D  <- LongData_HazardModel(time, data, data[[timeVar]],
+                                   data[[idVar]], timeVar,
+                                   index = match(idT, unique(idT)))
+        mf <- lapply(terms, model.frame.default, data = D)
+        X  <- mapply2(model.matrix.default, terms, mf)
+        if (is.null(Xbar)) Xbar <- list(NULL)
+        if (is.null(zero_ind)) zero_ind <- list(NULL)
+        out <- mapply2(f, X, Xbar, zero_ind)
+        return(out)
+      }
+      K <- length(terms)
+      out <- vector("list", K)
+      D0  <- LongData_HazardModel(time, data, data[[timeVar]],
                                   data[[idVar]], timeVar,
                                   index = match(idT, unique(idT)))
-        mf <- lapply(terms, model.frame.default, data = D)
-        X <- mapply2(model.matrix.default, terms, mf)
-        if (!is.null(Xbar))
-            X <- mapply2(function (m, mu) m - rep(mu, each = nrow(m)), X, Xbar)
-        if (!is.null(zero_ind)) {
-            f <- function (m, ind) {
-                if (length(ind) > 0) {
-                    m[, ind] <- 0 * m[, ind]
-                    m[, -ind] <- 1
-                }
-                m
-            }
-            X <- mapply2(f, X, zero_ind)
+      for (i in seq_len(K)) {
+        if (!length(IE_time[[i]]) || !any(is.finite(IE_time[[i]]))) {
+          mf <- model.frame.default(terms[[i]], data = D0)
+          X  <- model.matrix.default(terms[[i]], mf)
+          out[[i]] <- f(X, Xbar[[i]], zero_ind[[i]])
+          next
         }
-        X
+        time_i <- time
+        if (is.list(time_i)) {
+          time_i <- lapply(time_i, pmin, IE_time[[i]])
+        } else {
+          time_i <- pmin(time_i, IE_time[[i]])
+        }
+        Di <- LongData_HazardModel(time_i, data, data[[timeVar]],
+                                   data[[idVar]], timeVar,
+                                   index = match(idT, unique(idT)))
+        mf <- model.frame.default(terms[[i]], data = Di)
+        X  <- model.matrix.default(terms[[i]], mf)
+        out[[i]] <- f(X, Xbar[[i]], zero_ind[[i]])
+      }
+      out
     }
-    degn_matr_slp <- function (time, terms, Xbar, eps, direction) {
+    degn_matr_slp <- function (time, terms, Xbar, eps, direction, IE_time) { #!! new
         K <- length(terms)
         out <- vector("list", K)
         for (i in seq_len(K)) {
+            time_i <- time #!! new
             direction_i <- if (length(direction[[i]])) direction[[i]][[1L]] else "both"
             eps_i <- if (length(eps[[i]])) eps[[i]][[1L]] else 0.001
+            if (length(IE_time[[i]])) { #!! new
+              if (is.list(time_i)) {
+                time_i <- lapply(time_i, pmin, IE_time[[i]])
+              } else {
+                time_i <- pmin(time_i, IE_time[[i]])
+              }
+            }
+            # Both: f'(t) = (f(t + eps) - f(t - eps)) / (2 * eps)
+            # Backward: f'(t) = (f(t) - f(t - eps)) / eps
             if (direction_i == "both") {
-                if (is.list(time)) {
-                    t1 <- lapply(time, function (t) t + eps_i)
-                    t2 <- lapply(time, function (t) t - eps_i)
+                if (is.list(time_i)) { #!! new
+                    t1 <- lapply(time_i, "+", eps_i) #!! new
+                    t2 <- lapply(time_i, "-", eps_i) #!! new
                 } else {
-                    t1 <- time + eps_i
-                    t2 <- time - eps_i
+                    t1 <- time_i + eps_i #!! new
+                    t2 <- time_i - eps_i #!! new
                 }
-            } else {
-                t1 <- time
-                if (is.list(time)) {
-                    t2 <- lapply(time, function (t) t - eps_i)
+            } else { # "backward"
+                t1 <- time_i #!! new
+                if (is.list(time_i)) { #!! new
+                    t2 <- lapply(time_i, "-", eps_i) #!! new
                 } else {
-                    t2 <- time - eps_i
+                    t2 <- time_i - eps_i #!! new
                 }
             }
-            e <- if (direction_i == "both") c(mapply("-", t1, t2)) else 1
             e <- c(mapply("-", t1, t2))
-            terms_i <- terms[[i]]
             D1 <- LongData_HazardModel(t1, data, data[[timeVar]],
                                        data[[idVar]], timeVar,
                                        match(idT, unique(idT)))
-            mf1 <- model.frame.default(terms_i, data = D1)
-            X1 <- model.matrix.default(terms_i, mf1)
+            mf1 <- model.frame.default(terms[[i]], data = D1)
+            X1 <- model.matrix.default(terms[[i]], mf1)
             D2 <- LongData_HazardModel(t2, data, data[[timeVar]],
                                        data[[idVar]], timeVar,
                                        match(idT, unique(idT)))
-            mf2 <- model.frame.default(terms_i, data = D2)
-            X2 <- model.matrix.default(terms_i, mf2)
+            mf2 <- model.frame.default(terms[[i]], data = D2)
+            X2 <- model.matrix.default(terms[[i]], mf2)
             if (!is.null(Xbar)) {
                 X1 <- X1 - rep(Xbar[[i]], each = nrow(X1))
                 X2 <- X2 - rep(Xbar[[i]], each = nrow(X2))
@@ -1094,105 +1312,193 @@ design_matrices_functional_forms <- function (time, terms, data, timeVar, idVar,
         }
         out
     }
-    degn_matr_acc <- function (time, terms, Xbar) {
+    degn_matr_dlt <- function (time, terms, Xbar, time_window, standardise,
+                               IE_time) { #!! new
+      K <- length(terms)
+      out <- vector("list", K)
+      for (i in seq_len(K)) {
+        time_window_i <- if (length(time_window[[i]])) time_window[[i]][[1L]] else NULL
+        standardise_i <- if (length(standardise[[i]])) standardise[[i]][[1L]] else FALSE
+        time_i <- time #!! new
+        if (length(IE_time[[i]])) { #!! new
+          if (is.list(time_i)) {
+            time_i <- lapply(time_i, pmin, IE_time[[i]])
+          } else {
+            time_i <- pmin(time_i, IE_time[[i]])
+          }
+        }
+        t1 <- time_i #!! new
+        if (is.list(time_i)) { #!! new
+          if (is.null(time_window_i)) {
+            t2 <- lapply(time_i, function (t) numeric(length(t))) #!! new
+          } else {
+            t2 <- lapply(time_i, function (t) pmax(t - time_window_i, 0)) #!! new
+          }
+        } else {
+          if (is.null(time_window_i)) {
+            t2 <- 0 * t1 #!! new
+          } else {
+            t2 <- pmax(time_i - time_window_i, 0) #!! new
+          }
+        }
+        e <- if (is.list(time_i)) {
+            c(mapply("-", t1, t2))
+        } else if (is.matrix(time_i)) {
+            c(t(t1)) - c(t(t2))
+        } else {
+            t1 - t2
+        }
+        if (!standardise_i) {
+          e[] <- 1
+        } else {
+          e[e == 0] <- 1 # guard against division by zero, 0/0 -> 0/1=0
+        }
+        D1 <- LongData_HazardModel(t1, data, data[[timeVar]],
+                                   data[[idVar]], timeVar,
+                                   match(idT, unique(idT)))
+        mf1 <- model.frame.default(terms[[i]], data = D1)
+        X1 <- model.matrix.default(terms[[i]], mf1)
+        D2 <- LongData_HazardModel(t2, data, data[[timeVar]],
+                                   data[[idVar]], timeVar,
+                                   match(idT, unique(idT)))
+        mf2 <- model.frame.default(terms[[i]], data = D2)
+        X2 <- model.matrix.default(terms[[i]], mf2)
+        if (!is.null(Xbar)) {
+          X1 <- X1 - rep(Xbar[[i]], each = nrow(X1))
+          X2 <- X2 - rep(Xbar[[i]], each = nrow(X2))
+        }
+        out[[i]] <- (X1 - X2) / e
+      }
+      out
+    }
+    degn_matr_acc <- function (time, terms, Xbar, IE_time) { #!! new
         K <- length(terms)
         out <- vector("list", K)
         for (i in seq_len(K)) {
-            if (is.list(time)) {
-                t1 <- lapply(time, function (t) t + 0.001)
-                t2 <- lapply(time, function (t) t - 0.001)
+          time_i <- time #!! new
+          if (length(IE_time[[i]])) { #!! new
+            if (is.list(time_i)) {
+              time_i <- lapply(time_i, pmin, IE_time[[i]])
             } else {
-                t1 <- time + 0.001
-                t2 <- time - 0.001
+              time_i <- pmin(time_i, IE_time[[i]])
             }
-            e <- c(mapply("-", t1, t2))
-            terms_i <- terms[[i]]
-            D <- LongData_HazardModel(time, data, data[[timeVar]],
-                                      data[[idVar]], timeVar,
-                                      match(idT, unique(idT)))
-            mf <- model.frame.default(terms_i, data = D)
-            X <- model.matrix.default(terms_i, mf)
-            D1 <- LongData_HazardModel(t1, data, data[[timeVar]],
-                                       data[[idVar]], timeVar,
-                                       match(idT, unique(idT)))
-            mf1 <- model.frame.default(terms_i, data = D1)
-            X1 <- model.matrix.default(terms_i, mf1)
-            D2 <- LongData_HazardModel(t2, data, data[[timeVar]],
-                                       data[[idVar]], timeVar,
-                                       match(idT, unique(idT)))
-            mf2 <- model.frame.default(terms_i, data = D2)
-            X2 <- model.matrix.default(terms_i, mf2)
-            if (!is.null(Xbar)) {
-                X <- X - rep(Xbar[[i]], each = nrow(X1))
-                X1 <- X1 - rep(Xbar[[i]], each = nrow(X1))
-                X2 <- X2 - rep(Xbar[[i]], each = nrow(X2))
+          }
+          if (is.list(time_i)) { #!! new
+            t1 <- lapply(time_i, "+", 0.001) #!! new
+            t2 <- lapply(time_i, "-", 0.001) #!! new
+            } else {
+              t1 <- time_i + 0.001 #!! new
+              t2 <- time_i - 0.001 #!! new
             }
-            out[[i]] <- (X1 - 2 * X + X2) / (e * e)
-
+          e <- c(mapply("-", t1, t2))
+          D <- LongData_HazardModel(time_i, data, data[[timeVar]], #!! new
+                                    data[[idVar]], timeVar,
+                                    match(idT, unique(idT)))
+          mf <- model.frame.default(terms[[i]], data = D)
+          X <- model.matrix.default(terms[[i]], mf)
+          D1 <- LongData_HazardModel(t1, data, data[[timeVar]],
+                                     data[[idVar]], timeVar,
+                                     match(idT, unique(idT)))
+          mf1 <- model.frame.default(terms[[i]], data = D1)
+          X1 <- model.matrix.default(terms[[i]], mf1)
+          D2 <- LongData_HazardModel(t2, data, data[[timeVar]],
+                                     data[[idVar]], timeVar,
+                                     match(idT, unique(idT)))
+          mf2 <- model.frame.default(terms[[i]], data = D2)
+          X2 <- model.matrix.default(terms[[i]], mf2)
+          if (!is.null(Xbar)) {
+              X <- X - rep(Xbar[[i]], each = nrow(X1))
+              X1 <- X1 - rep(Xbar[[i]], each = nrow(X1))
+              X2 <- X2 - rep(Xbar[[i]], each = nrow(X2))
+          }
+          # f''(t) = (f(t + eps) - 2 * f(t) + f(t - eps)) / eps^2, eps = e / 2
+          out[[i]] <- (X1 - 2 * X + X2) / (e * e * 0.25)
         }
         out
     }
-    degn_matr_area <- function (time, terms, Xbar, time_window) {
-        if (!is.list(time)) {
-            time <- if (is.matrix(time)) split(time, row(time))
-            else split(time, seq_along(time))
+    degn_matr_area <- function (time, terms, Xbar, time_window, IE_time) { #!! new
+      GK <- gaussKronrod(15L)
+      wk <- GK$wk # quadrature weights
+      sk <- GK$sk # quadrature nodes (abscissae)
+      quadrature_points <- function (x, time_window) {
+        if (is.null(time_window)) {
+        # Gauss–Kronrod approximates integrals on the reference interval [-1, 1]:
+        # \int_{-1}^{+1} f(s) ds \approx \sum_j wk_j f(sk_j)
+        # We integrate f(t) over [t-, t+] = [0, x] using the change of variable
+        # t = (t+ - t-)/2 * s + (t- + t+)/2, with s \in [-1, 1], which gives
+        # \int_{t-}^{t+} f(t) dt
+        # = (t+ - t-)/2 * \int_{-1}^{1} f((t+ - t-)/2 * s + (t- + t+)/2) ds
+        # \approx (t+ - t-)/2 * \sum_j wk_j * f((t+ - t-)/2 * sk_j + (t- + t+)/2),
+        # here t- = 0 and t+ = x, so (t+ - t-)/2 = P = x/2,
+        # = P * \sum_j wk_j * f(P * (sk_j + 1))
+        P <- unname(x * 0.5)
+        sk <- outer(P, sk + 1) # t_j = P * (sk_j + 1) maps nodes from [-1, 1] to [0, x]
+        # We divide by x to obtain the average over [0, x], i.e. (1/x) * \int_0^x f(t) dt
+        # then the quadrature prefactor becomes (P/x) = (x/2)/x = 1/2, so
+        # = 1/2 * \sum_j wk_j * f(P * (sk_j + 1))
+        list(P = c(t(outer(0.5, wk))), sk = sk)
+        } else {
+        # Here instead of [0, x], we integrate over the previous window
+        # ending at x: [t-, t+] = [x0, x],  with x0 = max(x - time_window, 0).
+        # The effective window Length is L = t+ - t- = x - x0 = x - max(0, x - time_window) = min(x, time_window),
+        # i.e., if x < time_window, we integrate over [0, x].
+        L  <- pmin(x, time_window) # = x - max(x - time_window, 0)
+        P  <- 0.5 * L # = (t+ - t-)/2 = (x - (x - L))/2 = L/2
+        M  <- x - P # = (t+ + t-)/2 = (x + (x - L))/2 = x - L/2
+        sk <- outer(P, sk) + M
+        # As above, for the average over any interval [t-, t+],
+        # (1/L) * \int_{t-}^{t+} f(t) dt has the constant prefactor (P/L) = (L/2)/L = 1/2
+        #P <- unname(c(x - x + time_window) / 2) #?? to delete
+        #sk <- outer(P, sk) + (c(x + x - time_window) / 2) #?? to delete
+        list(P = c(t(outer(0.5, wk))), sk = sk)
         }
-        GK <- gaussKronrod(15L)
-        wk <- GK$wk
-        sk <- GK$sk
-        quadrature_points <- function (x, time_window) {
-            if (is.null(time_window)) {
-                P <- unname(x / 2)
-                sk <- outer(P, sk + 1)
-                # we divide with x to obtain the area up to time t, divided by t
-                # to account for the length of the interval
-                list(P = c(t(outer(P / x, wk))), sk = sk)
-            } else {
-                P <- unname(c(x - x + time_window) / 2)
-                sk <- outer(P, sk) + (c(x + x - time_window) / 2)
-                # we divide with (x - time_window) to obtain the area from time_window
-                # up to time t, divided by t - time_window to account for the length
-                # of the interval
-                list(P = c(t(outer(P / time_window, wk))), sk = sk)
-            }
         }
-        sum_qp <- function (m) {
-            n <- nrow(m)
-            grp <- rep(seq_len(round(n / 15)), each = 15L)
-            rowsum(m, grp, reorder = FALSE)
+      sum_qp <- function (m) {
+        n <- nrow(m)
+        grp <- rep(seq_len(round(n / 15L)), each = 15L)
+        rowsum(m, grp, reorder = FALSE)
         }
-        K <- length(terms)
-        out <- vector("list", K)
-        for (i in seq_len(K)) {
-            time_window_i <- if (length(time_window[[i]])) time_window[[i]][[1L]] else NULL
-            terms_i <- terms[[i]]
-            qp <- lapply(time, quadrature_points, time_window = time_window_i)
-            ss <- lapply(qp, function (x) c(t(x[['sk']])))
-            Pwk <- unlist(lapply(qp, '[[', 'P'), use.names = FALSE)
-
-
-            D <- LongData_HazardModel(ss, data, data[[timeVar]],
-                                      data[[idVar]], timeVar,
-                                      match(idT, unique(idT)))
-            mf <- model.frame.default(terms_i, data = D)
-            X <- Pwk * model.matrix.default(terms_i, mf)
-            out[[i]] <- sum_qp(X)
+      K <- length(terms)
+      out <- vector("list", K)
+      for (i in seq_len(K)) {
+        time_window_i <- if (length(time_window[[i]])) time_window[[i]][[1L]] else NULL
+        time_i <- time #!! new
+        if (length(IE_time[[i]])) { #!! new
+          if (is.list(time_i)) {
+            time_i <- lapply(time_i, pmin, IE_time[[i]])
+          } else {
+            time_i <- pmin(time_i, IE_time[[i]])
+          }
         }
-        out
-    }
-    ################
-    out <- list("value" = desgn_matr(time, terms, Xbar, NULL),
-                "coefs" = desgn_matr(time, terms, Xbar, zero_ind),
-                "slope" = degn_matr_slp(time, terms, Xbar, eps, direction),
-                "velocity" = degn_matr_slp(time, terms, Xbar, eps, direction),
-                "acceleration" = degn_matr_acc(time, terms, Xbar),
-                "area" = degn_matr_area(time, terms, Xbar, time_window))
+        if (!is.list(time_i)) {
+          time_i <- if (is.matrix(time_i)) split(time_i, row(time_i))
+          else split(time_i, seq_along(time_i))
+        }
+        qp <- lapply(time_i, quadrature_points, time_window = time_window_i) #!! new
+        ss <- lapply(qp, function (x) c(t(x[['sk']])))
+        Pwk <- unlist(lapply(qp, '[[', 'P'), use.names = FALSE)
+        D <- LongData_HazardModel(ss, data, data[[timeVar]],
+                                  data[[idVar]], timeVar,
+                                  match(idT, unique(idT)))
+        mf <- model.frame.default(terms[[i]], data = D)
+        X <- Pwk * model.matrix.default(terms[[i]], mf)
+        out[[i]] <- sum_qp(X)
+        }
+      out
+      }
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+    out <- list("value" = desgn_matr(time, terms, Xbar, NULL, IE_time), #!! new
+                "coefs" = desgn_matr(time, terms, Xbar, zero_ind, IE_time), #!! new
+                "slope" = degn_matr_slp(time, terms, Xbar, eps, direction, IE_time), #!! new
+                "velocity" = degn_matr_slp(time, terms, Xbar, eps, direction, IE_time), #!! new
+                "acceleration" = degn_matr_acc(time, terms, Xbar, IE_time), #!! new
+                "area" = degn_matr_area(time, terms, Xbar, time_window, IE_time), #!! new
+                "Delta" = degn_matr_dlt(time, terms, Xbar, time_window, standardise, IE_time)) #!! new
     out <- lapply(seq_along(Fun_Forms), function (i)
         lapply(out[Fun_Forms[[i]]], "[[", i))
     names(out) <- names(Fun_Forms)
     out
 }
-
 
 ms_setup <- function (data, timevars, statusvars, transitionmat, id, covs = NULL) {
     # setup times matrix with NAs
@@ -1434,26 +1740,211 @@ factor2 <- function (x, ...) factor(x, levels = unique(x), ...)
 
 plot_hazard <- function (object, CI = TRUE, plot = TRUE,
                          tmax = NULL) {
-    r <- range(object$model_data$Time_right)
-    if (!is.null(tmax)) r[2L] <- tmax
-    tt <- seq(r[1L], r[2L], len = 501)
     nstrata <- length(unique(object$model_data$strata))
-    strt <- rep(1, length(tt))
+    r <- range(object$model_data$Time_right)
+    r <- rep(list(r), nstrata)
+    if (!is.null(tmax)) {
+        tmax <- rep_len(tmax, nstrata)
+        r[] <- mapply2(function (rr, ttmax) {rr[2L] <- ttmax; rr}, r, tmax)
+    }
+    tt <- lapply(r, function (rr) seq(rr[1L], rr[2L], length.out = 501))
+    strt <- rep(seq_len(nstrata), sapply(tt, length))
+    tt <- unlist(tt)
     W0 <- create_W0(tt, object$control$knots,
-                    object$control$Bsplines_degree + 1, strt)
-    h <- exp(c(W0 %*% object$statistics$Mean$bs_gammas))
-    low <- exp(c(W0 %*% object$statistics$CI_low$bs_gammas))
-    upp <- exp(c(W0 %*% object$statistics$CI_upp$bs_gammas))
+                    object$control$Bsplines_degree, strt,
+                    object$control$basis, object$control$timescale_base_hazard)
+    bs_gammas <- do.call('rbind', object$mcmc$bs_gammas)
+    W_std_gammas <- do.call('rbind', object$mcmc$W_std_gammas)
+    Wlong_std_alphas <- do.call('rbind', object$mcmc$Wlong_std_alphas)
+    n_mcmc <- nrow(bs_gammas)
+    h_vals <- matrix(0.0, n_mcmc, nrow(W0))
+    for (i in seq_len(n_mcmc)) {
+        h_vals[i, ] <- exp(c(W0 %*% bs_gammas[i, ]) - W_std_gammas[i, ] -
+                               Wlong_std_alphas[i, ])
+    }
+    h <- colMeans(h_vals, na.rm = TRUE)
+    ci <- apply(h_vals, 2L, quantile2)
+    low <- ci[1L, ]
+    upp <- ci[2L, ]
     if (plot) {
-        plot(r, range(low, upp), type = "n", xlab = "Time",
-             ylab = "Baseline Hazard Function")
-        if (CI) {
-            polygon(c(tt, rev(tt)), c(low, rev(upp)), col = "lightgrey",
-                    border = NA)
+        for (j in seq_len(nstrata)) {
+            jj <- strt == j
+            plot(r[[j]], range(low[jj], upp[jj]), type = "n", xlab = "Time",
+                 ylab = "Baseline Hazard Function")
+            if (CI) {
+                polygon(c(tt[jj], rev(tt[jj])), c(low[jj], rev(upp[jj])),
+                        col = "lightgrey", border = NA)
+            }
+            lines(tt[jj], h[jj], lwd = 2, col = "red")
         }
-        lines(tt, h, lwd = 2, col = "red")
     } else {
-        cbind(time = tt, h = h, low = low, upp = upp)
+        cbind(time = tt, h = h, low = low, upp = upp, strata = strt)
+    }
+}
+
+ecdf_compare <- function (rep_y, obs_y, percentiles = c(0.025, 0.975)) {
+    trapezoid_rule <- function (f, x) {
+        sum(0.5 * diff(x) * (f[-length(x)] + f[-1L]))
+    }
+    r1 <- quantile(obs_y, probs = percentiles[1L], na.rm = TRUE)
+    r2 <- quantile(obs_y, probs = percentiles[2L], na.rm = TRUE)
+    x_vals <- seq(r1, r2, length.out = 500)
+    rep_y <- apply(rep_y, 2L, function (x, x_vals) ecdf(x)(x_vals),
+                   x_vals = x_vals)
+    F0 <- ecdf(obs_y)
+    F0 <- F0(x_vals)
+    se <- sqrt(F0 * (1 - F0) / length(obs_y))
+    F0u <- pmin(F0 + 1.959964 * se, 1)
+    F0l <- pmax(F0 - 1.959964 * se, 0)
+    MISE <- mean(apply((rep_y - F0)^2, 2L, trapezoid_rule, x = x_vals))
+    matplot(x_vals, rep_y, type = "s", lty = 1, col = "lightgrey",
+            xlab = "values", ylab = "Empirical CDF", ylim = c(0, 1))
+    lines(x_vals, F0, lwd = 1.5, type = "s")
+    lines(x_vals, F0l, lwd = 1.5, lty = 2, type = "s")
+    lines(x_vals, F0u, lwd = 1.5, lty = 2, type = "s")
+    legend("bottomright", c("replicated data", "observed data"),
+           lty = 1, col = c("lightgrey", "black"), bty = "n", cex = 0.9)
+    rootMISE <- round(sqrt(MISE), 5)
+    text(r1 + 0.15 * (r2 - r1), 0.9, bquote(sqrt(MISE) == .(rootMISE)))
+}
+
+get_hazard <- function (base_hazard) {
+    pwc_const <- length(grep("[pP]iecewise.*[cC]onst", base_hazard))
+    #
+    pwc_linear <- length(grep("[pP]iecewise.*[lL]inear", base_hazard))
+    #
+    pwc_quad <- length(grep("[pP]iecewise.*[qQ]uad", base_hazard))
+    #
+    weibull <- length(grep("[wW]eibull", base_hazard))
+    #
+    log_time <- length(grep("[logLog].*time", base_hazard))
+    #
+    ns <- length(grep("[nN]s(?!ta)", base_hazard, perl = TRUE)) |
+        length(grep("[nN]S(?!ta)", base_hazard, perl = TRUE)) |
+        length(grep("[nN]atural.*cubic", base_hazard)) |
+        length(grep("[nN]atural.*spline", base_hazard))
+    out <- c(pwc_const = pwc_const, pwc_linear = pwc_linear,
+             pwc_quad = pwc_quad, weibull = weibull, log_time = log_time,
+             ns = ns)
+    if (!sum(out)) {
+        stop("could not discern a specific baseline hazard from the input; ",
+             "use the control arguments instead.\n")
+    } else out
+}
+
+variogram <- function (y, times, id, compute_var = TRUE) {
+    na_ind <- is.na(y) | is.na(times)
+    y <- as.vector(y[!na_ind])
+    times <- as.vector(times[!na_ind])
+    id <- id[!na_ind]
+    id <- match(id, unique(id))
+    unq_id <- unique(id)
+    n <- length(unq_id)
+    vv <- vt <- vector("list", n)
+    vtot <- count <- 0
+    for (i in seq_len(n)) {
+        id_i <- id == unq_id[i]
+        y_i <- y[id_i]
+        times_i <- times[id_i]
+        n_i <- length(y_i)
+        if (n_i > 1L) {
+            inds <- combn(n_i, 2)
+            vv[[i]] <- 0.5 * (y_i[inds[1L, ]] - y_i[inds[2L, ]])^2
+            vt[[i]] <- abs(times_i[inds[1L, ]] - times_i[inds[2L, ]])
+        } else {
+            vv[[i]] <- vt[[i]] <- 0
+        }
+        if (compute_var) {
+            ii <- i + 1
+            while (ii <= n) {
+                id_ii <- id == unq_id[ii]
+                y_ii <- y[id_ii]
+                dtot <- outer(y_i, y_ii, function (x, y) 0.5 * (x - y)^2)
+                vtot <- vtot + sum(dtot)
+                count <- count + length(dtot)
+                ii <- ii + 1
+            }
+        }
+    }
+    svar <- cbind(time_lag = unlist(vt, use.names = FALSE),
+                  diffs2 = unlist(vv, use.names = FALSE))
+    sigma2 <- mean(vtot)
+    vrgm <- list(svar = svar, sigma2 = vtot / count)
+    class(vrgm) <- "vrgm"
+    vrgm
+}
+
+variogram <- function (y, times, id) {
+    na_ind <- is.na(y) | is.na(times)
+    y <- as.vector(y[!na_ind])
+    times <- as.vector(times[!na_ind])
+    id <- id[!na_ind]
+    id <- match(id, unique(id))
+    svar <- variogram_cpp(split(y, id), split(times, id))
+    colnames(svar) <- c("time_lag", "diffs2")
+    vrgm <- list(svar = svar, sigma2 = NA_real_)
+    class(vrgm) <- "vrgm"
+    vrgm
+}
+
+plot.vrgm <- function (x, smooth = FALSE, bdw = NULL, follow.time = NULL,
+                       points = TRUE, ...) {
+    if (!inherits(x, "vrgm")) {
+        stop("Data must be of class 'vrgm'\n")
+    }
+    vargm <- x
+    svar <- vargm$svar
+    sigma2 <- vargm$sigma2
+    if (is.null(follow.time)) {
+        left <- min(svar[, 1])
+        right <- max(svar[, 1])
+    } else {
+        left <- follow.time[1]
+        right <- follow.time[2]
+    }
+    if (is.null(bdw)) {
+        bdw <- (right - left)/10
+    }
+    nbdw <- (right - left)/bdw
+    Mid <- c()
+    Mean <- c()
+    Count <- c()
+    for (it in 1:(nbdw)) {
+        lt <- left + (it - 1) * bdw
+        rt <- left + it * bdw
+        mid <- lt + (rt - lt)/2
+        if (length(svar[svar[, 1] < rt & svar[, 1] >= lt, 2]) > 0) {
+            mean <- mean(svar[svar[, 1] < rt & svar[, 1] >= lt, 2])
+            Count <- c(Count, length(svar[svar[, 1] < rt & svar[, 1] >= lt, 2]))
+        }
+        else {
+            mean <- NA
+            Count <- c(Count, 0)
+        }
+        Mid <- c(Mid, mid)
+        Mean <- c(Mean, mean)
+    }
+    mean.line <- cbind(Mid[!is.na(Mean)], Mean[!is.na(Mean)])
+    Count <- Count[!is.na(Mean)]
+    if (points) {
+        plot(svar[, 1], svar[, 2], xlab = "u", ylab = "Variogram",
+             pch = ".", ...)
+        if (smooth) {
+            lines(smooth.spline(svar[, 1], svar[, 2]), lty = 1, lwd = 1.3)
+        } else {
+            lines(mean.line, lwd = 1.3, lty = 1)
+        }
+        abline(h = sigma2, lwd = 1.3, lty = 1)
+    } else {
+        if (smooth) {
+            plot(smooth.spline(svar[, 1], svar[, 2]), xlab = "u",
+                 ylab = "Variogram", ...)
+        } else {
+            plot(mean.line, type = "l", xlab = "u", ylab = "Variogram", ...)
+        }
+        abline(h = sigma2, lwd = 2, lty = 1)
+        abline(h = min(mean.line[mean.line[, 1] <= right & mean.line[, 1] >= left, 2]), lty = 2)
+        abline(h = max(mean.line[mean.line[, 1] <= right & mean.line[, 1] >= left, 2]), lty = 2)
     }
 }
 

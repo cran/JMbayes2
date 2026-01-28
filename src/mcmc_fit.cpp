@@ -145,6 +145,7 @@ List mcmc_cpp (List model_data, List model_info, List initial_values,
   uword n_burnin = as<uword>(control["n_burnin"]);
   bool MALA = as<bool>(control["MALA"]);
   // priors
+  LogicalVector penalized_bs_gammas = as<LogicalVector>(priors["penalized_bs_gammas"]);
   field<vec> mean_bs_gammas = List2Field_vec(as<List>(priors["mean_bs_gammas"]));
   field<mat> Tau_bs_gammas = List2Field_mat(as<List>(priors["Tau_bs_gammas"]));
   vec post_A_tau_bs_gammas = as<vec>(priors["A_tau_bs_gammas"]) +
@@ -206,7 +207,10 @@ List mcmc_cpp (List model_data, List model_info, List initial_values,
   uword n_b = b_mat.n_rows;
   uword n_bs_gammas = bs_gammas.n_rows;
   uword n_strata = tau_bs_gammas.n_rows;
-  uword n_per_stratum = n_bs_gammas / n_strata;
+  uvec ncoefs_per_stratum(n_strata);
+  for (uword i = 0; i < n_strata; ++i) {
+      ncoefs_per_stratum.at(i) = mean_bs_gammas.at(i).n_rows;
+  }
   uword n_gammas = gammas.n_rows;
   uword n_alphas = alphas.n_rows;
   uword n_alphaF = alphaF.n_rows;
@@ -359,14 +363,21 @@ List mcmc_cpp (List model_data, List model_info, List initial_values,
 
     ////////////////////////////////////////////////////////////////////////
 
+    uword str1 = 0;
+    uword str2 = ncoefs_per_stratum.at(0) - 1;
     for (uword j = 0; j < n_strata; ++j) {
-      vec bs_gammas_j =
-        bs_gammas.rows(j * n_per_stratum, (j + 1) * n_per_stratum - 1);
-      double quad = as_scalar(bs_gammas_j.t() * Tau_bs_gammas.at(j) *
-                              bs_gammas_j);
-      double post_B_tau = B_tau_bs_gammas.at(j) + 0.5 * quad;
-      tau_bs_gammas.at(j) = R::rgamma(post_A_tau_bs_gammas.at(j), 1 / post_B_tau);
-      res_tau_bs_gammas.at(it, j) = tau_bs_gammas.at(j);
+         if (penalized_bs_gammas[j]) {
+            vec bs_gammas_j = bs_gammas.rows(str1, str2);
+            double quad = as_scalar(bs_gammas_j.t() * Tau_bs_gammas.at(j) *
+                                    bs_gammas_j);
+            double post_B_tau = B_tau_bs_gammas.at(j) + 0.5 * quad;
+            tau_bs_gammas.at(j) = R::rgamma(post_A_tau_bs_gammas.at(j), 1 / post_B_tau);
+            res_tau_bs_gammas.at(it, j) = tau_bs_gammas.at(j);
+        }
+        if (j + 1 < n_strata) {
+            str1 += ncoefs_per_stratum.at(j);
+            str2 += ncoefs_per_stratum.at(j + 1);
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////
@@ -1336,4 +1347,47 @@ arma::mat hSfun (const List &Data, const List &MCMC) {
     return out;
 }
 
+// [[Rcpp::export]]
+arma::mat variogram_cpp(const arma::field<arma::vec> &y,
+                        const arma::field<arma::vec> &times) {
+    uword n = y.n_elem;
+    uvec Nis(n);
+    for (uword i = 0; i < n; ++i) {
+        uword n_i = y.at(i).n_rows;
+        if (n_i > 1) {
+            Nis.at(i) = Rf_choose(y.at(i).n_rows, 2);
+        } else {
+            Nis.at(i) = 1;
+        }
+    }
+    mat out(sum(Nis), 2, fill::zeros);
+    uword str = 0;
+    uword end = Nis.at(0) - 1;
+    for (uword i = 0; i < n; ++i) {
+        vec y_i = y.at(i);
+        vec times_i = times.at(i);
+        uword n_i = y.at(i).n_rows;
+        if (n_i > 1) {
+            uword ncombs = Nis.at(i);
+            vec diffs_i(ncombs, fill::zeros);
+            vec lags_i(ncombs, fill::zeros);
+            uword pos = 0;
+            for (uword j = 0; j < n_i; ++j) {
+                for (uword k = j + 1; k < n_i; ++k) {
+                    double diff = y_i.at(j) - y_i.at(k);
+                    diffs_i.at(pos) = 0.5 * diff * diff;
+                    lags_i.at(pos) = fabs(times_i.at(j) - times_i.at(k));
+                    ++pos;
+                }
+            }
+            out.submat(str, 0, end, 0) = lags_i;
+            out.submat(str, 1, end, 1) = diffs_i;
+        }
+        if (i + 1 < n) {
+            str += Nis.at(i);
+            end += Nis.at(i + 1);
+        }
+    }
+    return out;
+}
 

@@ -15,8 +15,8 @@ Fit joint models for longitudinal and time-to-event data under the Bayesian appr
 \tabular{ll}{
 Package: \tab JMbayes2\cr
 Type: \tab Package\cr
-Version: \tab 0.5-7\cr
-Date: \tab 2025-06-16\cr
+Version: \tab 0.6-0\cr
+Date: \tab 2026-01-28\cr
 License: \tab GPL (>=3)\cr
 }
 
@@ -28,7 +28,7 @@ fitted joint models. The most important of those are included in the
 }
 
 \author{
-Dimitris Rizopoulos, Grigorios Papageorgiou, Pedro Miranda Afonso
+Dimitris Rizopoulos, Grigorios Papageorgiou, Pedro Miranda-Afonso
 
 Maintainer: Dimitris Rizopoulos <d.rizopoulos@erasmusmc.nl>
 }
