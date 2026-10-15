@@ -22,49 +22,71 @@ vec logPrior_sigmas(const vec &sigmas, const bool &gamma_prior,
   return out;
 }
 
+inline void logPrior_sigmas_void (const vec &sigmas, const bool gamma_prior,
+                                  const vec &sigmas_sigmas, const double sigmas_df,
+                                  const vec &sigmas_mean, const double sigmas_shape,
+                                  vec &out) {
+    if (gamma_prior) {
+        log_dgamma_void(sigmas, sigmas_shape, sigmas_mean / sigmas_shape, out);
+    } else {
+        log_dht_void(sigmas, sigmas_sigmas, sigmas_df, out);
+    }
+}
 
 void update_sigmas (vec &sigmas, const uvec &has_sigmas,
                     const field<mat> &y, const field<vec> &eta,
-                    const vec &extra_parms, const CharacterVector &families,
-                    const CharacterVector &links, const field<uvec> &idFast,
+                    const vec &extra_parms, const std::vector<std::string> &families,
+                    const std::vector<std::string> &links, const field<uvec> &idFast,
                     const bool &gamma_prior,
                     const double &sigmas_df, const vec &sigmas_sigmas,
                     const double &sigmas_shape, const vec &sigmas_mean,
                     const uword &it, mat &res_sigmas, vec &scale_sigmas,
-                    mat &acceptance_sigmas) {
-  uword n_sigmas = sigmas.n_rows;
-  for (uword i = 0; i < n_sigmas; ++i) {
-    if (!has_sigmas.at(i)) continue;
-    vec logLik_long_i =
-      log_long_i(y.at(i), eta.at(i), sigmas.at(i), extra_parms.at(i),
-                 std::string(families[i]), std::string(links[i]), idFast.at(i));
-    double denominator = sum(logLik_long_i) +
-      sum(logPrior_sigmas(sigmas, gamma_prior, sigmas_sigmas, sigmas_df,
-                          sigmas_mean, sigmas_shape));
-    //
-    double SS = 0.5 * std::pow(scale_sigmas.at(i), 2.0);
-    double log_mu_current = std::log(sigmas.at(i)) - SS;
-    vec proposed_sigmas = propose_lnorm(sigmas, log_mu_current, scale_sigmas, i);
-    vec logLik_long_proposed_i =
-      log_long_i(y.at(i), eta.at(i), proposed_sigmas.at(i), extra_parms.at(i),
-                 std::string(families[i]), std::string(links[i]), idFast.at(i));
-    double numerator = sum(logLik_long_proposed_i) +
-      sum(logPrior_sigmas(proposed_sigmas, gamma_prior, sigmas_sigmas, sigmas_df,
-                          sigmas_mean, sigmas_shape));
-    double log_mu_proposed = std::log(proposed_sigmas.at(i)) - SS;
-    double log_ratio = numerator - denominator +
-      R::dlnorm(sigmas.at(i), log_mu_proposed, scale_sigmas.at(i), true) -
-      R::dlnorm(proposed_sigmas.at(i), log_mu_current, scale_sigmas.at(i), true);
-    if (std::isfinite(log_ratio) && std::exp(log_ratio) > R::runif(0.0, 1.0)) {
-      sigmas = proposed_sigmas;
-      acceptance_sigmas.at(it, i) = 1;
+                    mat &acceptance_sigmas,
+                    field<vec> &mu_obs_workspace,
+                    field<vec> &log_contr_obs_workspace,
+                    field<vec> &log_contr_subj_workspace, vec &log_prior_sigmas) {
+    uword n_sigmas = sigmas.n_rows;
+    for (uword i = 0; i < n_sigmas; ++i) {
+        if (!has_sigmas.at(i)) continue;
+        double current_sigma_i = sigmas.at(i);
+        log_long_i(y.at(i), eta.at(i), mu_obs_workspace.at(i), current_sigma_i,
+                   extra_parms.at(i), families[i], links[i], idFast.at(i),
+                   log_contr_obs_workspace.at(i), log_contr_subj_workspace.at(i));
+        logPrior_sigmas_void(sigmas, gamma_prior, sigmas_sigmas, sigmas_df,
+                        sigmas_mean, sigmas_shape, log_prior_sigmas);
+        double denominator = arma::accu(log_contr_subj_workspace.at(i)) +
+            arma::accu(log_prior_sigmas);
+        //
+        double val = scale_sigmas.at(i);
+        double SS = 0.5 * val * val;
+        double log_mu_current = std::log(sigmas.at(i)) - SS;
+        double proposed_sigma_i = R::rlnorm(log_mu_current, scale_sigmas.at(i));
+        sigmas.at(i) = proposed_sigma_i;
+        log_long_i(y.at(i), eta.at(i), mu_obs_workspace.at(i),
+                   proposed_sigma_i, extra_parms.at(i), families[i], links[i],
+                   idFast.at(i), log_contr_obs_workspace.at(i),
+                   log_contr_subj_workspace.at(i));
+        logPrior_sigmas_void(sigmas, gamma_prior, sigmas_sigmas,
+                             sigmas_df, sigmas_mean, sigmas_shape,
+                             log_prior_sigmas);
+        double numerator = arma::accu(log_contr_subj_workspace.at(i)) +
+            arma::accu(log_prior_sigmas);
+        double log_mu_proposed = std::log(proposed_sigma_i) - SS;
+        double log_ratio = numerator - denominator +
+            log_dlnorm(current_sigma_i, log_mu_proposed, scale_sigmas.at(i)) -
+            log_dlnorm(proposed_sigma_i, log_mu_current, scale_sigmas.at(i));
+        if (std::isfinite(log_ratio) && log_ratio > std::log(R::unif_rand())) {
+            acceptance_sigmas.at(it, i) = 1;
+        } else {
+            sigmas.at(i) = current_sigma_i;
+        }
+        if (it > 119) {
+            scale_sigmas.at(i) =
+                robbins_monro(scale_sigmas.at(i), acceptance_sigmas.at(it, i),
+                              it - 100);
+        }
+        res_sigmas.at(it, i) = sigmas.at(i);
     }
-    if (it > 119) {
-      scale_sigmas.at(i) =
-        robbins_monro(scale_sigmas.at(i), acceptance_sigmas.at(it, i), it - 100);
-    }
-    res_sigmas.at(it, i) = sigmas.at(i);
-  }
 }
 
 void update_sigmaF (vec &sigmaF,
@@ -104,21 +126,23 @@ void update_sigmaF (vec &sigmaF,
                     const vec &alphaF_H,
                     const vec &alphaF_h,
                     vec &frailtyH_sigmaF_alphaF,
-                    vec &frailtyh_sigmaF_alphaF
-) {
+                    vec &frailtyh_sigmaF_alphaF,
+                    vec &lambda_H_workspace, vec &H_workspace,
+                    vec &lambda_H2_workspace, vec &H2_workspace,
+                    vec &surv_out_workspace, vec &logLik_surv_proposed) {
   // denominator
-  double denominator = sum(logLik_surv) +
-    sum(logPrior_sigmas(sigmaF, gamma_prior_sigmaF, sigmaF_sigmas, sigmaF_df,
-                        sigmaF_mean, sigmaF_shape));
+  double denominator = arma::accu(logLik_surv) +
+      arma::accu(logPrior_sigmas(sigmaF, gamma_prior_sigmaF, sigmaF_sigmas,
+                                 sigmaF_df, sigmaF_mean, sigmaF_shape));
   // numerator
-  double SS = 0.5 * std::pow(scale_sigmaF.at(0), 2.0);
+  double val = scale_sigmaF.at(0);
+  double SS = 0.5 * val * val;
   double log_mu_current = std::log(sigmaF.at(0)) - SS;
   vec proposed_sigmaF = propose_lnorm(sigmaF, log_mu_current, scale_sigmaF, 0);
   vec proposed_frailtyH_sigmaF_alphaF(WH_gammas.n_rows, fill::zeros);
   vec proposed_frailtyh_sigmaF_alphaF(which_event.n_rows, fill::zeros);
   proposed_frailtyH_sigmaF_alphaF = frailty_H % alphaF_H * proposed_sigmaF;
   proposed_frailtyh_sigmaF_alphaF = frailty_h.rows(which_event) % alphaF_h.rows(which_event) * proposed_sigmaF;
-  vec logLik_surv_proposed =
     log_surv(W0H_bs_gammas, W0h_bs_gammas, W0H2_bs_gammas,
              WH_gammas, Wh_gammas, WH2_gammas,
              WlongH_alphas, Wlongh_alphas, WlongH2_alphas,
@@ -126,16 +150,19 @@ void update_sigmaF (vec &sigmaF,
              id_H_fast, id_h_fast,
              which_event, which_right_event, which_left,
              any_interval, which_interval,
-             recurrent,
-             proposed_frailtyH_sigmaF_alphaF, proposed_frailtyh_sigmaF_alphaF);
-  double numerator = sum(logLik_surv_proposed) +
-    sum(logPrior_sigmas(proposed_sigmaF, gamma_prior_sigmaF, sigmaF_sigmas, sigmaF_df,
-                        sigmaF_mean, sigmaF_shape));
+             recurrent, proposed_frailtyH_sigmaF_alphaF,
+             proposed_frailtyh_sigmaF_alphaF,lambda_H_workspace, H_workspace,
+             lambda_H2_workspace, H2_workspace, surv_out_workspace,
+             logLik_surv_proposed);
+  double numerator = arma::accu(logLik_surv_proposed) +
+      arma::accu(logPrior_sigmas(proposed_sigmaF, gamma_prior_sigmaF,
+                                 sigmaF_sigmas, sigmaF_df, sigmaF_mean,
+                                 sigmaF_shape));
   // log_ratio
   double log_mu_proposed = std::log(proposed_sigmaF.at(0)) - SS;
   double log_ratio = numerator - denominator +
-    R::dlnorm(sigmaF.at(0), log_mu_proposed, scale_sigmaF.at(0), true) -
-    R::dlnorm(proposed_sigmaF.at(0), log_mu_current, scale_sigmaF.at(0), true);
+    log_dlnorm(sigmaF.at(0), log_mu_proposed, scale_sigmaF.at(0)) -
+    log_dlnorm(proposed_sigmaF.at(0), log_mu_current, scale_sigmaF.at(0));
   if (std::isfinite(log_ratio) && std::exp(log_ratio) > R::runif(0.0, 1.0)) {
     sigmaF = proposed_sigmaF;
     acceptance_sigmaF.at(it, 0) = 1;

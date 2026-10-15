@@ -165,7 +165,257 @@ opt_model <- function (models, newdata, t0, parallel = "snow", cores = 1L) {
     out
 }
 
+#object = Models[[4]]
+#newdata = testing[testing$time < T0, ]
+#newdata2 = testing[testing$time >= T0, ]
 
+dmvnorm <- function (x, mu, Sigma = NULL, invSigma = NULL, log = FALSE,
+                     prop = FALSE) {
+    if (!is.matrix(x))
+        x <- rbind(x)
+    if (is.matrix(mu)) {
+        if (nrow(mu) != nrow(x))
+            stop("incorrect dimensions for 'mu'.")
+        p <- ncol(mu)
+    } else {
+        p <- length(mu)
+        mu <- rep(mu, each = nrow(x))
+    }
+    if (is.null(Sigma) && is.null(invSigma))
+        stop("'Sigma' or 'invSigma' must be given.")
+    if (!is.null(Sigma)) {
+        if (is.list(Sigma)) {
+            ev <- Sigma$values
+            evec <- Sigma$vectors
+        }
+        else {
+            ed <- eigen(Sigma, symmetric = TRUE)
+            ev <- ed$values
+            evec <- ed$vectors
+        }
+        invSigma <- evec %*% (t(evec)/ev)
+        if (!prop)
+            logdetSigma <- sum(log(ev))
+    } else {
+        if (!prop)
+            logdetSigma <- -determinant(as.matrix(invSigma))$modulus
+    }
+    ss <- x - mu
+    quad <- 0.5 * rowSums((ss %*% invSigma) * ss)
+    if (!prop)
+        fact <- -0.5 * (p * log(2 * pi) + logdetSigma)
+    if (log) {
+        if (!prop)
+            as.vector(fact - quad)
+        else as.vector(-quad)
+    } else {
+        if (!prop)
+            as.vector(exp(fact - quad))
+        else as.vector(exp(-quad))
+    }
+}
 
+npar <- function (object, newdata, type = c("marginal", "conditional")) {
+    type <- match.arg(type)
+    if (type == "marginal") {
+        TermsX <- object$terms
+        mfX <- model.frame(TermsX, object$data)
+        X <- model.matrix(TermsX, mfX)
+        formYz <- formula(object$modelStruct$reStruct[[1]])
+        mfZ <- model.frame(terms(formYz), data = object$data)
+        TermsZ <- attr(mfZ, "terms")
+        Z <- model.matrix(TermsZ, mfZ)
+        nx <- qr(model.matrix(TermsX, mfX))$rank
+        sigma <- object$sigma
+        D <- lapply(pdMatrix(object$modelStruct$reStruct), "*", sigma^2)[[1]]
+        D <- unique(D[lower.tri(D, TRUE)])
+        D <- D[D > 1e-06]
+        nz <- length(D)
+        nx + nz + 1
+        #qr(cbind(X, Z))$rank + 1
+    } else {
+        TermsX <- object$terms
+        formYz <- formula(object$modelStruct$reStruct[[1]])
+        mfZ <- model.frame(terms(formYz), data = object$data)
+        TermsZ <- attr(mfZ, "terms")
+        sigma <- object$sigma
+        D <- lapply(pdMatrix(object$modelStruct$reStruct), "*", sigma^2)[[1]]
+        #######
+        all_vars <- unique(c(all.vars(TermsX), all.vars(TermsZ)))
+        newdata_nomiss <- newdata[complete.cases(newdata[all_vars]), ]
+        mfX_new <- model.frame(TermsX, data = newdata_nomiss)
+        X_new <- model.matrix(TermsX, mfX_new)
+        mfZ_new <- model.frame(TermsZ, data = newdata_nomiss)
+        Z_new <- model.matrix(TermsZ, mfZ_new)
+        XZ <- cbind(X_new, Z_new)
+        V11 <- crossprod(X_new)
+        V22 <- crossprod(Z_new) + sigma^2 * solve(D)
+        VV <- nearPD(
+            rbind(cbind(V11, crossprod(X_new, Z_new)),
+                  cbind(crossprod(Z_new, X_new), V22)))
+        sum(diag(XZ %*% solve(VV, t(XZ))))
+    }
+}
 
+total_var <- function (ys) {
+    n <- length(ys)
+    s <- 0
+    count <- 0
+    f <- function(x, y) 0.5 * (x - y)^2
+    for (i in seq_len(n-1)) {
+        for (j in seq(i + 1, n)) {
+            r <- outer(ys[[i]], ys[[j]], f)
+            s <- s + sum(r)
+            count <- count + length(r)
+        }
+    }
+    s / count
+}
 
+#object = tt[[2]]
+#newdata = training[training$time <= 3, ]
+#newdata2 = training[training$time > 3, ]
+
+AIC_lme <- function (object, newdata) {
+    TermsX <- object$terms
+    formYz <- formula(object$modelStruct$reStruct[[1]])
+    mfZ <- model.frame(terms(formYz), data = object$data)
+    TermsZ <- attr(mfZ, "terms")
+    id_var <- names(object$modelStruct$reStruct)
+    betas <- fixef(object)
+    sigma <- object$sigma
+    D <- lapply(pdMatrix(object$modelStruct$reStruct), "*", sigma^2)[[1]]
+    all_vars <- unique(c(all.vars(TermsX), all.vars(TermsZ)))
+    newdata <- newdata[complete.cases(newdata[all_vars]), ]
+    mfX_new <- model.frame(TermsX, data = newdata)
+    X_new <- model.matrix(TermsX, mfX_new)
+    mfZ_new <- model.frame(TermsZ, data = newdata)
+    Z_new <- model.matrix(TermsZ, mfZ_new)
+    y_new <- model.response(mfX_new, "numeric")
+    id_new <- newdata[[id_var]]
+    unq_id <- unique(id_new)
+    id_new <- match(id_new, unq_id)
+    n <- length(unq_id)
+    lL <- numeric(n)
+    for (i in seq_len(n)) {
+        id_i <- id_new == i
+        y_new_i <- y_new[id_i]
+        X_new_i <- X_new[id_i, , drop = FALSE]
+        Z_new_i <- Z_new[id_i, , drop = FALSE]
+        mu_i <- c(X_new_i %*% betas)
+        V_i <- Z_new_i %*% tcrossprod(D, Z_new_i) + sigma^2 * diag(sum(id_i))
+        lL[i] <- dmvnorm(y_new_i, mu_i, V_i, log = TRUE)
+    }
+    nx <- qr(X_new)$rank
+    D <- unique(D[lower.tri(D, TRUE)])
+    D <- D[D > 1e-06]
+    nz <- length(D)
+    - 2 * sum(lL, na.rm = TRUE) + 2 * (nx + nz + 1)
+}
+
+indv_pred_lme <- function (object, newdata, newdata2,
+                          interval = c("none", "confidence", "prediction"),
+                          M = 200, level = 0.95) {
+    if (!inherits(object, "lme") && !inherits(object, "lmeComponents")) {
+        stop("Use only with 'lme' or 'lmeComponents' objects.\n")
+    }
+    interval <- match.arg(interval)
+    if (inherits(object, "lme")) {
+        TermsX <- object$terms
+        formYz <- formula(object$modelStruct$reStruct[[1]])
+        mfZ <- model.frame(terms(formYz), data = object$data)
+        TermsZ <- attr(mfZ, "terms")
+        id_var <- names(object$modelStruct$reStruct)
+        betas <- fixef(object)
+        sigma <- object$sigma
+        D <- lapply(pdMatrix(object$modelStruct$reStruct), "*", sigma^2)[[1]]
+        V <- vcov(object)
+    } else {
+        TermsX <- object$TermsX
+        TermsZ <- object$TermsZ
+        id_var <- object$idVar
+        betas <- object$betas
+        sigma <- object$sigma
+        D <- object$D
+        V <- object$V
+    }
+    all_vars <- unique(c(all.vars(TermsX), all.vars(TermsZ)))
+    newdata_nomiss <- newdata[complete.cases(newdata[all_vars]), ]
+    mfX_new <- model.frame(TermsX, data = newdata_nomiss)
+    X_new <- model.matrix(TermsX, mfX_new)
+    mfZ_new <- model.frame(TermsZ, data = newdata_nomiss)
+    Z_new <- model.matrix(TermsZ, mfZ_new)
+    y_new <- model.response(mfX_new, "numeric")
+    if (length(id_var) > 1)
+        stop("the current version of the function only works with a single grouping variable.\n")
+    if (is.null(newdata[[id_var]]))
+        stop("subject id variable not in newdata.")
+    id_nomiss <- match(newdata_nomiss[[id_var]], unique(newdata_nomiss[[id_var]]))
+    n <- length(unique(id_nomiss))
+    modes <- matrix(0, n, ncol(Z_new))
+    chol_post_vars <- DZtVinv <- vector("list", n)
+    for (i in seq_len(n)) {
+        id_i <- id_nomiss == i
+        y_new_id <- y_new[id_i]
+        X_new_id <- X_new[id_i, , drop = FALSE]
+        Z_new_id <- Z_new[id_i, , drop = FALSE]
+        Vi_inv <- solve(Z_new_id %*% tcrossprod(D, Z_new_id) +
+                            sigma^2 * diag(sum(id_i)))
+        DZtVinv[[i]] <- tcrossprod(D, Z_new_id) %*% Vi_inv
+        mu_id <- c(X_new_id %*% betas)
+        modes[i, ] <- c(DZtVinv[[i]] %*% (y_new_id - mu_id))
+        t1 <- DZtVinv[[i]] %*% Z_new_id %*% D
+        t2 <- DZtVinv[[i]] %*% X_new_id %*% V %*%
+            crossprod(X_new_id, Vi_inv) %*% Z_new_id %*% D
+        chol_post_vars[[i]] <- chol(D - t1 + t2)
+    }
+    fitted_y <- c(X_new %*% betas) +
+        rowSums(Z_new * modes[id_nomiss, , drop = FALSE])
+    #####
+    newdata2_nomiss <- newdata2[complete.cases(newdata2[all_vars]), ]
+    mfX_new2 <- model.frame(TermsX, data = newdata2_nomiss)
+    X_new2 <- model.matrix(TermsX, mfX_new2)
+    mfZ_new2 <- model.frame(TermsZ, data = newdata2_nomiss)
+    Z_new2 <- model.matrix(TermsZ, mfZ_new2)
+    id_nomiss2 <- match(newdata2_nomiss[[id_var]], unique(newdata2_nomiss[[id_var]]))
+    predicted_y <- c(X_new2 %*% betas) +
+        rowSums(Z_new2 * modes[id_nomiss2, , drop = FALSE])
+    out <- list(fitted_y = fitted_y, predicted_y = predicted_y)
+    if (interval != "none") {
+        betas_M <- MASS::mvrnorm(M, betas, V)
+        modes_fun <- function (betas) {
+            v <- mapply("%*%", DZtVinv, split(y_new - X_new %*% betas, id_nomiss))
+            if (ncol(Z_new) > 1L) t(v) else as.matrix(v)
+        }
+        modes_M <- lapply(split(betas_M, row(betas_M)), modes_fun)
+        n_pred <- length(predicted_y)
+        sampled_y <- matrix(0, n_pred, M)
+        ncz <- ncol(Z_new)
+        for (m in seq_len(M)) {
+            betas_m <- betas_M[m, ]
+            modes_m <- modes_M[[m]]
+            b_m <- matrix(rnorm(n * ncz), n, ncz)
+            for (i in seq_len(n)) {
+                b_m[i, ] <- b_m[i, ] %*% chol_post_vars[[i]]
+            }
+            b_m <- modes_m + b_m
+            mean_m <- c(X_new2 %*% betas_m) +
+                rowSums(Z_new2 * b_m[id_nomiss2, , drop = FALSE])
+            sampled_y[, m] <- if (interval == "confidence") {
+                mean_m
+            } else {
+                rnorm(n_pred, mean_m, sigma)
+            }
+        }
+        low <- apply(sampled_y, 1L, quantile, probs = (1 - level) / 2)
+        upp <- apply(sampled_y, 1L, quantile, probs = 1 - (1 - level) / 2)
+        out <- c(out, list(low = low, upp = upp))
+    }
+    out
+}
+
+cor2cov <- function (R, vars, sds = NULL) {
+    p <- nrow(R)
+    if (is.null(sds)) sds <- sqrt(vars)
+    sds * R * rep(sds, each = p)
+}

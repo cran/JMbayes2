@@ -12,28 +12,29 @@ using namespace arma;
 
 void update_betas (field<vec> &betas, mat &res_betas, field<vec> &acceptance_betas,
                    field<vec> &scale_betas, field<vec> &eta, vec &logLik_long,
+                   field<mat> &eta_H, field<mat> &eta_h, field<mat> &eta_H2,
                    vec &logLik_surv, mat &Wlong_H, mat &Wlong_h, mat &Wlong_H2,
                    vec &WlongH_alphas, vec &Wlongh_alphas, vec &WlongH2_alphas,
                    const vec &Tau_mean_betas_HC, const mat &prior_Tau_betas_HC,
-                   mat &b_mat, //!! new
+                   mat &b_mat,
                    const mat &L, const vec &sds, const mat &X_dot,
-                   const field<uvec> &ind_FE, // indices for the FE in res_betas[it,] belonging to the field betas. E.g., {{1,2,3}, {4, 5}, {6}}
-                   const field<uvec> &ind_RE, //!! new
-                   const uvec &ind_FE_HC, // indices for the FE present in the HC (cols in res_betas)
-                   const uvec &id_patt, // vector with the ids' outcome missing pattern
-                   const field<uvec> &ind_RE_patt, // indices for the RE present in each outcome missing pattern (cols in D)
-                   const field<uvec> &ind_FE_patt, // indices for the FE (in HC) present in each outcome missi
+                   const field<uvec> &ind_FE,
+                   const field<uvec> &ind_RE,
+                   const uvec &ind_FE_HC,
+                   const uvec &id_patt,
+                   const field<uvec> &ind_RE_patt,
+                   const field<uvec> &ind_FE_patt,
                    const uword &it,
                    const uvec &has_tilde_betas,
                    const field<mat> &X,
                    const field<mat> &Z,
-                   field<mat> &b, //!! new
+                   field<mat> &b,
                    const field<uvec> &idL,
                    const field<mat> &y,
                    const vec &sigmas,
                    const vec &extra_parms,
-                   const CharacterVector &families,
-                   const CharacterVector &links,
+                   const std::vector<std::string> &families,
+                   const std::vector<std::string> &links,
                    const field<uvec> &idL_lp_fast,
                    const field<vec> &prior_mean_betas_nHC,
                    field<mat> &prior_Tau_betas_nHC,
@@ -57,197 +58,266 @@ void update_betas (field<vec> &betas, mat &res_betas, field<vec> &acceptance_bet
                    const uword &n_burnin,
                    const bool &recurrent,
                    const vec &frailtyH_sigmaF_alphaF, const vec &frailtyh_sigmaF_alphaF,
-                   const bool &save_random_effects, cube &res_b, cube &res_b_last, //!! new
-                   mat &cumsum_b, cube &outprod_b, const uword &n_iter) { //!! new
-  uword n_b = b_mat.n_rows;
-  mat u_mat = b_mat; //!! new
-  // FE in HC - Gibbs sampling
-  vec betas_vec = docall_rbindF(betas);
-  vec mean_u = X_dot * betas_vec.rows(ind_FE_HC); //!! new
-  uword patt_count = ind_RE_patt.n_elem; // number of unique outcome-missing patterns
-  uword p_HC = ind_FE_HC.n_elem; // number of HC-FE
-  uword q = b_mat.n_cols; // number of RE
-  mat sum_JXDXJ(p_HC, p_HC, fill::zeros); // sum for the posterior's parameters
-  vec sum_JXDu(p_HC, fill::zeros); // sum for the posterior's parameters
-  mat U = L.each_row() % sds.t(); // RE vcov matrix Cholesky factorization (upper)
-  field<mat> D_inv(patt_count); // all unique vcov_inv matrices across the missing outcome patterns
-  for (uword i = 0; i < n_b; ++i) { // i-th patient
-    /* I'm assuming that n_b in the total number of patients, including those
-     * who only have survival outcome. I.e., b_mat has rows for them too.
-     */
-    if (i < patt_count && !ind_RE_patt.at(i).is_empty()) {
-      /* obtain all unique vcov_inv matrices required for the sums in the posterior parameters
-       * & jumps the pattern in which the patient misses all longitudinal outcomes
-       */
-      mat U_patt_inv = inv(trimatu(chol_update(U, ind_RE_patt.at(i))));
-      D_inv.at(i) = U_patt_inv * U_patt_inv.t();
-    }
-    uword patt_i = id_patt.at(i); // id missing outcome pattern
-    if (ind_FE_patt.at(patt_i).is_empty()) continue; // skip ids without longitudinal outcomes
-    uvec ind_FE_i = ind_FE_patt.at(patt_i);
-    uvec ind_RE_i = ind_RE_patt.at(patt_i);
-    mat X_dot_i = X_dot.rows(i * q, (i + 1) * q - 1);
-    X_dot_i = X_dot_i.submat(ind_RE_i, ind_FE_i);
-    u_mat.row(i) = b_mat.row(i) + mean_u.rows(i * q, (i + 1) * q - 1).t(); //!! new
-    vec u_i = u_mat.row(i).t(); //!! new
-    u_i = u_i.rows(ind_RE_i); //!! new
-    mat D_inv_i = D_inv.at(patt_i);
-    mat XD_i = X_dot_i.t() * D_inv_i;
-    vec XDu_i = XD_i * u_i;
-    mat XDX_i = XD_i * X_dot_i;
-    sum_JXDu += add_zero_rows(XDu_i, p_HC, ind_FE_i);
-    sum_JXDXJ += add_zero_colrows(XDX_i, p_HC, p_HC, ind_FE_i, ind_FE_i);
-  }
-  mat Sigma_1 = inv(prior_Tau_betas_HC + sum_JXDXJ); // improve via Cholesky decomposition
-  vec mean_1 = Sigma_1 * (Tau_mean_betas_HC + sum_JXDu);
-  betas_vec.rows(ind_FE_HC) = propose_mvnorm_vec(Sigma_1) + mean_1;
-  betas = vec2field(betas_vec, ind_FE);
-  // update b //!! new
-  mean_u = X_dot * betas_vec.rows(ind_FE_HC); //!! new
-  for (uword i = 0; i < n_b; ++i) { //!! new
-    b_mat.row(i) = u_mat.row(i) - mean_u.rows(i * q, (i + 1) * q - 1).t();
-  }
-  if (save_random_effects) { //!! new
-    res_b.slice(it) = b_mat;
-  } else {
-    if (it > n_burnin - 1) {
-      cumsum_b += b_mat;
-      for (uword j = 0; j < n_b; j++) {
-        outprod_b.slice(j) += b_mat.row(j).t() * b_mat.row(j);
-      }
-    }
-  }
-  if (it == n_iter - 1) {  //!! new
-    res_b_last.slice(0) = b_mat;
-  }
-  b = mat2field(b_mat, ind_RE); //!! new
-  // update eta
-  eta = linpred_mixed(X, betas, Z, b, idL);
-  // update logLik_surv
-  Wlong_H =
-    calculate_Wlong(X_H, Z_H, U_H, Wlong_bar, Wlong_sds, betas, b, id_H_,
-                    FunForms, Funs_FunForms);
-  WlongH_alphas = Wlong_H * alphas;
-  if (any_event) {
-    Wlong_h =
-      calculate_Wlong(X_h, Z_h, U_h, Wlong_bar, Wlong_sds, betas, b, id_h,
-                      FunForms, Funs_FunForms);
-    Wlongh_alphas = Wlong_h * alphas;
-  }
-  if (any_interval) {
-    Wlong_H2 =
-      calculate_Wlong(X_H2, Z_H2, U_H2, Wlong_bar, Wlong_sds, betas, b,
-                      id_H_, FunForms, Funs_FunForms);
-    WlongH2_alphas = Wlong_H2 * alphas;
-  }
-  logLik_surv = log_surv(W0H_bs_gammas, W0h_bs_gammas, W0H2_bs_gammas,
-                         WH_gammas, Wh_gammas, WH2_gammas,
-                         WlongH_alphas, Wlongh_alphas, WlongH2_alphas,
-                         log_Pwk, log_Pwk2, log_weights, id_h2, intgr_ind, intgr,
-                         id_H_fast, id_h_fast,
-                         which_event, which_right_event, which_left,
-                         any_interval, which_interval,
-                         recurrent, frailtyH_sigmaF_alphaF, frailtyh_sigmaF_alphaF);
+                   const bool &save_random_effects, cube &res_b, cube &res_b_last,
+                   mat &cumsum_b, cube &outprod_b, const uword &n_iter,
+                   vec &lambda_H_workspace, vec &H_workspace,
+                   vec &lambda_H2_workspace, vec &H2_workspace,
+                   vec &surv_out_workspace, vec &logLik_surv_proposed,
+                   const field<mat> &X_dots, mat &sum_JXDXJ, vec &sum_JXDu,
+                   mat &u_mat, vec &mean_u, mat &mean_u_mat, mat &mean_u_mat2,
+                   field<vec> &mu_obs_workspace,
+                   field<vec> &log_contr_obs_workspace,
+                   field<vec> &log_contr_subj_workspace, mat &U, mat &Q,
+                   mat &L_prec, vec &b_vec, vec &yy, vec &betasHC_workspace,
+                   vec &z_rand_betaHC, mat &outprod_workspace, vec &u_workspace,
+                   vec &u_tilde_workspace, mat &X_tilde_workspace,
+                   vec &JXDu_workspace, mat &JXDXJ_workspace,
+                   field<mat> &U_patt_field, field<uvec> &rem_patt_field,
+                   mat &Res_workspace) {
 
-  ///////////////////////////////////////////////////////////////////////////////
-  // FE outside HC - Metropolis-Hastings sampling
-  if (any(has_tilde_betas)) {
-    uword n_outcomes = betas.n_elem;
-    for (uword j = 0; j < n_outcomes; ++j) { // j-th outcome
-      if (!has_tilde_betas.at(j)) continue; // skip outcomes without nHC-FE
-      uvec ind_j = x_notin_z.at(j);
-      uword n_betas = ind_j.n_rows;
-      // denominator
-      double sum_logLik_long_j =
-        sum(log_long_i(y.at(j), eta.at(j), sigmas.at(j), extra_parms.at(j),
-                       std::string(families[j]), std::string(links[j]),
-                       idL_lp_fast.at(j)));
-      vec ll(n_betas);
-      /* improve: have input vec logPrior, and then use logPrior.at(j),
-       *  if we accept logPrior.at(j) = logPrior_j_prop. To avoid re-calculations
-       *  at each iteration
-       */
-      double logPrior_j =
-        logPrior(betas.at(j).rows(ind_j), prior_mean_betas_nHC.at(j),
-                 prior_Tau_betas_nHC.at(j), ll, 1.0, false);
-      double denominator_j = sum_logLik_long_j + sum(logLik_surv) + logPrior_j;
-      for (uword i = 0; i < n_betas; ++i) {
-        // proposal
-        field<vec> betas_prop = betas;
-        betas_prop.at(j).rows(ind_j) =
-          propose_norm(betas.at(j).rows(ind_j), scale_betas.at(j), i);
-        double logPrior_j_prop =
-          logPrior(betas_prop.at(j).rows(ind_j), prior_mean_betas_nHC.at(j),
-                   prior_Tau_betas_nHC.at(j), ll, 1.0, false);
-        // logLik_long proposal
-        field<vec> eta_prop = linpred_mixed_i(eta, X, betas_prop, Z, b, idL, j);
-        double sum_logLik_long_j_prop =
-          sum(log_long_i(y.at(j), eta_prop.at(j), sigmas.at(j), extra_parms.at(j),
-                         std::string(families[j]), std::string(links[j]),
-                         idL_lp_fast.at(j)));
-        // logLik_surv proposal
-        mat Wlong_H_prop =
-          calculate_Wlong(X_H, Z_H, U_H, Wlong_bar, Wlong_sds, betas_prop, b,
-                          id_H_, FunForms, Funs_FunForms);
-        vec WlongH_alphas_prop = Wlong_H_prop * alphas;
-        mat Wlong_h_prop(Wlong_h.n_rows, Wlong_h.n_cols);
-        vec Wlongh_alphas_prop(Wlongh_alphas.n_rows);
-        if (any_event) {
-          Wlong_h_prop =
-            calculate_Wlong(X_h, Z_h, U_h, Wlong_bar, Wlong_sds, betas_prop,
-                            b, id_h, FunForms, Funs_FunForms);
-          Wlongh_alphas_prop = Wlong_h_prop * alphas;
+    uword n_b = b_mat.n_rows;
+    uword q = b_mat.n_cols;
+
+    // FE in HC - Gibbs sampling
+    vec betas_vec = docall_rbindF(betas);
+    mean_u = X_dot * betas_vec.rows(ind_FE_HC);
+
+    // VECTORIZED RESHAPING: Replaces the manual u_mat loop
+    arma::mat alias_mat(mean_u.memptr(), q, n_b, false, true);
+    mean_u_mat = alias_mat.t();
+    u_mat = b_mat + mean_u_mat;
+
+    uword patt_count = ind_RE_patt.n_elem;
+    uword p_HC = ind_FE_HC.n_elem;
+
+    sum_JXDXJ.zeros();
+    sum_JXDu.zeros();
+    U = L.each_row() % sds.t();
+
+    // ISOLATED D_INV PRE-CALCULATION
+    // Store just the upper-triangular Cholesky factor, not the inverse
+    for (uword p = 0; p < patt_count; ++p) {
+        if (!ind_RE_patt.at(p).is_empty()) {
+            chol_update_inplace(U, ind_RE_patt.at(p), rem_patt_field.at(p),
+                                Res_workspace, U_patt_field.at(p));
         }
-        mat Wlong_H2_prop(Wlong_H2.n_rows, Wlong_H2.n_cols);
-        vec WlongH2_alphas_prop(WlongH2_alphas.n_rows);
-        if (any_interval) {
-          Wlong_H2_prop =
-            calculate_Wlong(X_H2, Z_H2, U_H2, Wlong_bar, Wlong_sds, betas_prop,
-                            b, id_H_, FunForms, Funs_FunForms);
-          WlongH2_alphas_prop = Wlong_H2_prop * alphas;
-        }
-        vec logLik_surv_prop =
-          log_surv(W0H_bs_gammas, W0h_bs_gammas, W0H2_bs_gammas,
-                   WH_gammas, Wh_gammas, WH2_gammas,
-                   WlongH_alphas_prop, Wlongh_alphas_prop, WlongH2_alphas_prop,
-                   log_Pwk, log_Pwk2, log_weights, id_h2, intgr_ind, intgr,
-                   id_H_fast, id_h_fast,
-                   which_event, which_right_event, which_left,
-                   any_interval, which_interval,
-                   recurrent, frailtyH_sigmaF_alphaF, frailtyh_sigmaF_alphaF);
-        // numerator
-        double numerator_j =
-          sum_logLik_long_j_prop + sum(logLik_surv_prop) + logPrior_j_prop;
-        // Hastings ratio
-        double acc_i(0.0);
-        double log_ratio_j = numerator_j - denominator_j;
-        if (std::isfinite(log_ratio_j) &&
-            std::exp(log_ratio_j) > R::runif(0.0, 1.0)) {
-          acc_i = 1.0;
-          if (it > n_burnin - 1) acceptance_betas.at(j).at(i) += 1.0;
-          betas.at(j) = betas_prop.at(j);
-          eta = eta_prop;
-          Wlong_H = Wlong_H_prop;
-          Wlong_h = Wlong_h_prop;
-          Wlong_H2 = Wlong_H2_prop;
-          WlongH_alphas = WlongH_alphas_prop;
-          Wlongh_alphas = Wlongh_alphas_prop;
-          WlongH2_alphas = WlongH2_alphas_prop;
-          logLik_surv = logLik_surv_prop;
-          denominator_j = numerator_j;
-        }
-        if (it > 119) {
-          scale_betas.at(j).at(i) =
-            robbins_monro(scale_betas.at(j).at(i), acc_i, it - 100);
-        }
-      }
     }
-  }
-  // update logLik_long with all betas
-  logLik_long = log_long(y, eta, sigmas, extra_parms, families, links,
-                         idL_lp_fast, unq_idL, n_b);
-  // save all results
-  res_betas.row(it) = docall_rbindF(betas).t();
+
+    uvec absolute_rows;
+    for (uword i = 0; i < n_b; ++i) {
+        uword patt_i = id_patt.at(i);
+        if (ind_FE_patt.at(patt_i).is_empty()) continue;
+
+        const uvec& ind_FE_i = ind_FE_patt.at(patt_i);
+        const uvec& ind_RE_i = ind_RE_patt.at(patt_i);
+        absolute_rows = i * q + ind_RE_i;
+
+        uword k = ind_RE_i.n_elem;
+        uword p_i = ind_FE_i.n_elem;
+
+        vec u_i(u_workspace.memptr(), k, false, true);
+        vec u_tilde(u_tilde_workspace.memptr(), k, false, true);
+        mat X_tilde(X_tilde_workspace.memptr(), k, p_i, false, true);
+        vec JXDu(JXDu_workspace.memptr(), p_i, false, true);
+        mat JXDXJ(JXDXJ_workspace.memptr(), p_i, p_i, false, true);
+        for (uword j = 0; j < k; ++j) {
+            u_i[j] = u_mat.at(i, ind_RE_i[j]);
+        }
+
+        // Fetch the upper-triangular Cholesky factor
+        const mat& R = U_patt_field.at(patt_i);
+        // Fast Triangular Solves (Calculates R^-T * X  and  R^-T * u)
+        arma::solve(X_tilde, arma::trimatl(R.t()), X_dots.at(i));
+        arma::solve(u_tilde, arma::trimatl(R.t()), u_i);
+
+        // Simple Cross-products
+        JXDu = X_tilde.t() * u_tilde;
+        sum_JXDu.rows(ind_FE_i) += JXDu;
+        JXDXJ = X_tilde.t() * X_tilde;
+        sum_JXDXJ.submat(ind_FE_i, ind_FE_i) += JXDXJ;
+    }
+
+    //mat Sigma_1 = inv_sympd(prior_Tau_betas_HC + sum_JXDXJ);
+    //vec mean_1 = Sigma_1 * (Tau_mean_betas_HC + sum_JXDu);
+    //betas_vec.rows(ind_FE_HC) = mean_1 + chol(Sigma_1, "lower") * randn<vec>(p_HC);
+    // 1. Define the Precision Matrix (Q) and Canonical Mean (b)
+    Q = prior_Tau_betas_HC + sum_JXDXJ;
+    b_vec = Tau_mean_betas_HC + sum_JXDu;
+    // 2. Calculate the Cholesky factor of the PRECISION matrix EXACTLY ONCE
+    arma::chol(L_prec, Q, "lower");
+    // 3. Forward substitution: Solve L_prec * yy = b_vec  (This is yy = L^-1 * b)
+    arma::solve(yy, arma::trimatl(L_prec), b_vec);
+    // 4. Add the standard normal noise
+    z_rand_betaHC.randn(p_HC);
+    yy += z_rand_betaHC;
+    // 5. Back substitution: Solve L_prec^T * x = ww (This is x = L^-T * yy)
+    arma::solve(betasHC_workspace, arma::trimatu(L_prec.t()), yy);
+    betas_vec.rows(ind_FE_HC) = betasHC_workspace;
+    vec2field_inplace(betas, betas_vec, ind_FE);
+
+    // 3. VECTORIZED b_mat RECALCULATION (Deletes an entire n_b loop)
+    mean_u = X_dot * betas_vec.rows(ind_FE_HC);
+    arma::mat alias_mat2(mean_u.memptr(), q, n_b, false, true);
+    mean_u_mat2 = alias_mat2.t();
+    b_mat = u_mat - mean_u_mat2;
+
+    if (save_random_effects) {
+        res_b.slice(it) = b_mat;
+    } else if (it > n_burnin - 1) {
+        cumsum_b += b_mat;
+        for (uword j = 0; j < n_b; j++) {
+            outprod_workspace = b_mat.row(j).t() * b_mat.row(j);
+            outprod_b.slice(j) += outprod_workspace;
+        }
+    }
+
+    if (it == n_iter - 1) {
+        res_b_last.slice(0) = b_mat;
+    }
+    mat2field_inplace(b, b_mat, ind_RE);
+
+    // update eta and logLik_surv baselines
+    linpred_mixed_inplace(eta, X, betas, Z, b, idL);
+
+    calculate_Wlong_inplace(Wlong_H, eta_H, X_H, Z_H, U_H, Wlong_bar, Wlong_sds,
+                            betas, b, id_H_, FunForms, Funs_FunForms);
+    WlongH_alphas = Wlong_H * alphas;
+    if (any_event) {
+        calculate_Wlong_inplace(Wlong_h, eta_h, X_h, Z_h, U_h, Wlong_bar,
+                                Wlong_sds, betas, b, id_h, FunForms,
+                                Funs_FunForms);
+        Wlongh_alphas = Wlong_h * alphas;
+    }
+    if (any_interval) {
+        calculate_Wlong_inplace(Wlong_H2, eta_H2, X_H2, Z_H2, U_H2, Wlong_bar,
+                                Wlong_sds, betas, b, id_H_, FunForms,
+                                Funs_FunForms);
+        WlongH2_alphas = Wlong_H2 * alphas;
+    }
+
+    log_surv(W0H_bs_gammas, W0h_bs_gammas, W0H2_bs_gammas, WH_gammas, Wh_gammas, WH2_gammas,
+             WlongH_alphas, Wlongh_alphas, WlongH2_alphas, log_Pwk, log_Pwk2, log_weights,
+             id_h2, intgr_ind, intgr, id_H_fast, id_h_fast, which_event, which_right_event,
+             which_left, any_interval, which_interval, recurrent, frailtyH_sigmaF_alphaF,
+             frailtyh_sigmaF_alphaF, lambda_H_workspace, H_workspace,
+             lambda_H2_workspace, H2_workspace, surv_out_workspace, logLik_surv);
+
+    // /////////////////////////////////////////////////////////////////////////////
+    // FE outside HC - Metropolis-Hastings sampling
+    if (any(has_tilde_betas)) {
+        uword n_outcomes = betas.n_elem;
+        for (uword j = 0; j < n_outcomes; ++j) {
+            if (!has_tilde_betas.at(j)) continue;
+
+            uvec ind_j = x_notin_z.at(j);
+            uword n_betas = ind_j.n_rows;
+
+            log_long_i(y.at(j), eta.at(j), mu_obs_workspace.at(j), sigmas.at(j),
+                       extra_parms.at(j), families[j], links[j], idL_lp_fast.at(j),
+                       log_contr_obs_workspace.at(j), log_contr_subj_workspace.at(j));
+
+            double sum_logLik_long_j = arma::accu(log_contr_subj_workspace.at(j));
+            vec ll(n_betas);
+            double logPrior_j =
+                logPrior(betas.at(j).rows(ind_j), prior_mean_betas_nHC.at(j),
+                         prior_Tau_betas_nHC.at(j), ll, 1.0, false);
+
+            double denominator_j = sum_logLik_long_j + arma::accu(logLik_surv) +
+                logPrior_j;
+
+            for (uword i = 0; i < n_betas; ++i) {
+                // 4. IN-PLACE SCALAR MUTATION (Destroys field<vec> deep copy bottleneck)
+                uword idx = ind_j.at(i);
+                double old_beta = betas.at(j).at(idx);
+                double diff = scale_betas.at(j).at(i) * R::norm_rand();
+                betas.at(j).at(idx) += diff;
+
+                double logPrior_j_prop =
+                    logPrior(betas.at(j).rows(ind_j), prior_mean_betas_nHC.at(j),
+                             prior_Tau_betas_nHC.at(j), ll, 1.0, false);
+
+                // 5. RANK-1 ETA UPDATE (Deletes the massive linpred_mixed_i matrix multiplication)
+                vec eta_j_prop = eta.at(j) + X.at(j).col(idx) * diff;
+
+                log_long_i(y.at(j), eta_j_prop, mu_obs_workspace.at(j),
+                           sigmas.at(j), extra_parms.at(j), families[j], links[j],
+                           idL_lp_fast.at(j), log_contr_obs_workspace.at(j),
+                           log_contr_subj_workspace.at(j));
+
+                double sum_logLik_long_j_prop =
+                    arma::accu(log_contr_subj_workspace.at(j));
+
+                // 6. DEFERRED MATRIX ALLOCATIONS
+                mat Wlong_H_prop =
+                    calculate_Wlong(X_H, Z_H, U_H, Wlong_bar, Wlong_sds, betas,
+                                    b, id_H_, FunForms, Funs_FunForms);
+                vec WlongH_alphas_prop = Wlong_H_prop * alphas;
+
+                mat Wlong_h_prop; vec Wlongh_alphas_prop;
+                if (any_event) {
+                    Wlong_h_prop =
+                        calculate_Wlong(X_h, Z_h, U_h, Wlong_bar, Wlong_sds,
+                                        betas, b, id_h, FunForms, Funs_FunForms);
+                    Wlongh_alphas_prop = Wlong_h_prop * alphas;
+                }
+
+                mat Wlong_H2_prop; vec WlongH2_alphas_prop;
+                if (any_interval) {
+                    Wlong_H2_prop =
+                        calculate_Wlong(X_H2, Z_H2, U_H2, Wlong_bar, Wlong_sds,
+                                        betas, b, id_H_, FunForms, Funs_FunForms);
+                    WlongH2_alphas_prop = Wlong_H2_prop * alphas;
+                }
+
+                log_surv(W0H_bs_gammas, W0h_bs_gammas, W0H2_bs_gammas, WH_gammas, Wh_gammas, WH2_gammas,
+                         WlongH_alphas_prop, Wlongh_alphas_prop, WlongH2_alphas_prop,
+                         log_Pwk, log_Pwk2, log_weights, id_h2, intgr_ind, intgr, id_H_fast, id_h_fast,
+                         which_event, which_right_event, which_left, any_interval, which_interval,
+                         recurrent, frailtyH_sigmaF_alphaF, frailtyh_sigmaF_alphaF,
+                         lambda_H_workspace, H_workspace,
+                         lambda_H2_workspace, H2_workspace, surv_out_workspace,
+                         logLik_surv_proposed);
+
+                double numerator_j =
+                    sum_logLik_long_j_prop + arma::accu(logLik_surv_proposed) +
+                    logPrior_j_prop;
+                double log_ratio_j = numerator_j - denominator_j;
+                double acc_i = 0.0;
+
+                // 7. FAST LOG-SPACE ACCEPTANCE
+                if (std::isfinite(log_ratio_j) &&
+                    std::log(R::unif_rand()) < log_ratio_j) {
+                    acc_i = 1.0;
+                    if (it > n_burnin - 1) acceptance_betas.at(j).at(i) += 1.0;
+                    // betas is already mutated
+                    eta.at(j) = eta_j_prop;
+                    Wlong_H = Wlong_H_prop;
+                    WlongH_alphas = WlongH_alphas_prop;
+                    if (any_event) {
+                        Wlong_h = Wlong_h_prop;
+                        Wlongh_alphas = Wlongh_alphas_prop;
+                    }
+                    if (any_interval) {
+                        Wlong_H2 = Wlong_H2_prop;
+                        WlongH2_alphas = WlongH2_alphas_prop;
+                    }
+                    logLik_surv = logLik_surv_proposed;
+                    denominator_j = numerator_j;
+                } else {
+                    // Reject: Simply revert the scalar change in the field
+                    betas.at(j).at(idx) = old_beta;
+                }
+                if (it > 119) {
+                    scale_betas.at(j).at(i) =
+                        robbins_monro(scale_betas.at(j).at(i), acc_i, it - 100);
+                }
+            }
+        }
+    }
+    log_long(y, eta, mu_obs_workspace, sigmas, extra_parms, families, links,
+             idL_lp_fast, unq_idL, logLik_long, log_contr_obs_workspace,
+             log_contr_subj_workspace);
+    res_betas.row(it) = docall_rbindF(betas).t();
 }
 
 #endif

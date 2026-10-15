@@ -10,17 +10,16 @@ using namespace arma;
 
 static double const Const_Unif_Proposal = 0.5 * std::pow(12.0, 0.5);
 static double const log2pi = std::log(2.0 * M_PI);
+static double const half_log2pi = 0.5 * std::log(2.0 * M_PI);
 
-double robbins_monro (const double &scale, const double &acceptance_it,
-                      const int &it, const double &target_acceptance = 0.45) {
-  double step_length = scale / (target_acceptance * (1.0 - target_acceptance));
-  double out;
-  if (acceptance_it > 0) {
-    out = scale + step_length * (1 - target_acceptance) / (double)it;
-  } else {
-    out = scale - step_length * target_acceptance / (double)it;
-  }
-  return out;
+double robbins_monro (double scale, double acceptance_it,
+                          int it, double target_acceptance = 0.45) {
+    double it_d = static_cast<double>(it);
+    if (acceptance_it > 0.0) {
+        return scale * (1.0 + 1.0 / (target_acceptance * it_d));
+    } else {
+        return scale * (1.0 - 1.0 / ((1.0 - target_acceptance) * it_d));
+    }
 }
 
 void inplace_UpperTrimat_mult (rowvec &x, const mat &trimat) {
@@ -62,22 +61,31 @@ mat cor2cov (const mat &R, const vec &sds) {
   return out;
 }
 
-vec group_sum (const vec &x, const uvec &ind) {
-  vec cumsum_x = cumsum(x);
-  vec out = cumsum_x.rows(ind);
-  out.insert_rows(0, 1);
-  out = diff(out);
-  return out;
+inline void group_sum (const arma::vec& x, const arma::uvec& ind,
+                       arma::vec& out) {
+    arma::uword m = ind.n_elem;
+    out.set_size(m);
+    // Extract raw pointers for maximum access speed
+    const double* p_x = x.memptr();
+    const arma::uword* p_ind = ind.memptr();
+    double* p_out = out.memptr();
+    arma::uword start = 0;
+    for (arma::uword i = 0; i < m; ++i) {
+        arma::uword end = p_ind[i];
+        double current_sum = 0.0;
+        // Sum the elements for the current segment
+        for (arma::uword j = start; j <= end; ++j) {
+            current_sum += p_x[j];
+        }
+        p_out[i] = current_sum;
+        // Next group starts exactly one element after the current group ends
+        start = end + 1;
+    }
 }
 
-vec group_sum2 (const vec &x, const uvec &ind) {
-    uvec tt = unique(ind);
-    uword n = tt.n_rows;
-    uvec ind2 = ind - 1;
-    vec out(n);
-    for (uword i = 0; i < n; ++i) {
-        out.at(i) = sum(x.elem(find(ind2 == i)));
-    }
+inline arma::vec group_sum (const arma::vec& x, const arma::uvec& ind) {
+    arma::vec out;
+    group_sum(x, ind, out); // Calls the fast, in-place version above
     return out;
 }
 
@@ -87,7 +95,8 @@ vec create_init_scale(const uword &n, const double &fill_val = 0.1) {
   return out;
 }
 
-field<vec> create_init_scaleF(const field<uvec> &x, const double &fill_val = 0.1) {
+field<vec> create_init_scaleF(const field<uvec> &x,
+                              const double &fill_val = 0.1) {
   uword n = x.size();
   field<vec> out(n);
   for (uword i = 0; i < n; ++i) {
@@ -135,9 +144,21 @@ field<mat> mat2field (const mat &b, const field<uvec> &ind_RE) {
   uword n = ind_RE.n_elem;
   field<mat> out(n);
   for (uword i = 0; i < n; i++) {
-    out.at(i) = b.cols(ind_RE.at(i));
+      uword first_col = ind_RE.at(i).front();
+      uword last_col  = ind_RE.at(i).back();
+      out.at(i) = b.cols(first_col, last_col);
   }
   return out;
+}
+
+inline void mat2field_inplace (field<mat> &out, const mat &b,
+                               const field<uvec> &ind_RE) {
+    uword n = ind_RE.n_elem;
+    for (uword i = 0; i < n; ++i) {
+        uword first_col = ind_RE.at(i).front();
+        uword last_col  = ind_RE.at(i).back();
+        out.at(i) = b.cols(first_col, last_col);
+    }
 }
 
 field<vec> vec2field (const vec &betas, const field<uvec> &ind_FE) {
@@ -147,6 +168,26 @@ field<vec> vec2field (const vec &betas, const field<uvec> &ind_FE) {
     out.at(i) = betas.rows(ind_FE.at(i));
   }
   return out;
+}
+
+inline void vec2field_inplace(field<vec> &out, const vec &betas_vec,
+                              const field<uvec> &ind_FE) {
+    uword n = ind_FE.n_elem;
+    // Pointer to the master vector we are pulling from
+    const double* betas_ptr = betas_vec.memptr();
+    for (uword i = 0; i < n; ++i) {
+        const uvec& idx = ind_FE.at(i);
+        uword len = idx.n_elem;
+        if (len == 0) continue;
+        // Pointers for the target vector and the specific index map
+        double* out_ptr = out.at(i).memptr();
+        const uword* idx_ptr = idx.memptr();
+        // Bare-metal loop: Writes sequentially into 'out',
+        // while safely jumping around 'betas_ptr' based on 'idx'
+        for (uword j = 0; j < len; ++j) {
+            out_ptr[j] = betas_ptr[idx_ptr[j]];
+        }
+    }
 }
 
 field<vec> create_storage (const field<uvec> &F) {
@@ -221,13 +262,12 @@ uvec create_fast_ind (const uvec &group) {
 }
 
 double logPrior(const vec &x, const vec &mean, mat &Tau, const vec &lambda,
-                const double &tau, const bool &shrink) {
+                double tau, bool shrink) {
   vec z = x - mean;
   if (shrink) {
     Tau.diag() = lambda;
   }
-  double out = - 0.5 * tau * as_scalar(z.t() * Tau * z);
-  return out;
+  return -0.5 * tau * arma::as_scalar(z.t() * Tau * z);
 }
 
 vec propose_norm (const vec &thetas, const vec &scale, const uword &i) {
@@ -236,7 +276,7 @@ vec propose_norm (const vec &thetas, const vec &scale, const uword &i) {
   return proposed_thetas;
 }
 
-vec propose_unif (const vec &thetas, const vec &scale, const uword &i) {
+vec propose_unif (const vec &thetas, const vec &scale, uword i) {
   vec proposed_thetas = thetas;
   proposed_thetas.at(i) = R::runif(thetas.at(i) - Const_Unif_Proposal * scale.at(i),
                      thetas.at(i) + Const_Unif_Proposal * scale.at(i));
@@ -244,14 +284,14 @@ vec propose_unif (const vec &thetas, const vec &scale, const uword &i) {
 }
 
 vec propose_lnorm (const vec &thetas, const double &log_mu_i, const vec &scale,
-                   const uword &i) {
+                   uword i) {
   vec proposed_thetas = thetas;
   proposed_thetas.at(i) = R::rlnorm(log_mu_i, scale.at(i));
   return proposed_thetas;
 }
 
 vec propose_norm_mala (const vec &thetas, const vec &scale,
-                       const double &deriv, const uword &i) {
+                       const double &deriv, uword i) {
   vec proposed_thetas = thetas;
   double mu = thetas.at(i) + 0.5 * scale.at(i) * deriv;
   double sigma = sqrt(scale.at(i));
@@ -327,73 +367,117 @@ vec propose_mvnorm_vec (const mat &Sigma) {
   return res;
 }
 
-vec mu_fun (const vec &eta, const std::string &link) {
-  uword n = eta.n_rows;
-  vec out(n);
-  if (link == "identity") {
-    out = eta;
-  } else if (link == "inverse") {
-    out = 1.0 / eta;
-  } else if (link == "logit") {
-    out = 1.0 / (1.0 + trunc_exp(- eta));
-  } else if (link == "probit") {
-    out = normcdf(eta);
-  } else if (link == "cloglog") {
-    out = - trunc_exp(- trunc_exp(eta)) + 1.0;
-  } else if (link == "log") {
-    out = trunc_exp(eta);
-  }
-  return out;
+void mu_fun (arma::vec &eta, const std::string &link) {
+    if (link == "identity") {
+        return;
+    } else if (link == "inverse") {
+        eta = 1.0 / eta;
+    } else if (link == "logit") {
+        eta = 1.0 / (1.0 + arma::trunc_exp(-eta));
+    } else if (link == "probit") {
+        eta = arma::normcdf(eta);
+    } else if (link == "cloglog") {
+        eta = 1.0 - arma::trunc_exp(-arma::trunc_exp(eta));
+    } else if (link == "log") {
+        eta = arma::trunc_exp(eta);
+    }
 }
 
-vec lbeta_arma (const vec &a, const vec &b) {
-  uword n = a.n_rows;
-  vec out(n);
-  for (uword i = 0; i < n; ++i) {
-    out.at(i) = R::lbeta(a.at(i), b.at(i));
-  }
-  return out;
+inline void log_dbinom_void (const arma::vec &x, const arma::vec &size,
+                      const arma::vec &prob, arma::vec &out) {
+    arma::uword n = x.n_elem;
+    const double* px = x.memptr();
+    const double* ps = size.memptr();
+    const double* pp = prob.memptr();
+    double* pout = out.memptr();
+    for (arma::uword i = 0; i < n; ++i) {
+        double xi = px[i];
+        double ni = ps[i];
+        double pi = pp[i];
+        if (xi == 0.0) {
+            pout[i] = ni * std::log(1.0 - pi);
+        } else if (xi == ni) {
+            pout[i] = ni * std::log(pi);
+        } else {
+            pout[i] = std::lgamma(ni + 1.0) - std::lgamma(xi + 1.0) -
+                std::lgamma(ni - xi + 1.0) + xi * std::log(pi) +
+                (ni - xi) * std::log(1.0 - pi);
+        }
+    }
 }
 
-vec lchoose_arma (const vec &n, const vec &k) {
-  uword n_ = n.n_rows;
-  vec out(n_);
-  for (uword i = 0; i < n_; ++i) {
-    out.at(i) = R::lchoose(n.at(i), k.at(i));
-  }
-  return out;
+inline void log_dpois_void (const arma::vec &x, const arma::vec &lambda,
+                       arma::vec &out) {
+    arma::uword n = x.n_elem;
+    const double* px = x.memptr();
+    const double* pl = lambda.memptr();
+    double* pout = out.memptr();
+    for (arma::uword i = 0; i < n; ++i) {
+        double xi = px[i];
+        double lambda_i = pl[i];
+        // Boundary short-circuit: log(Poisson(0; lambda)) = -lambda
+        // Completely skips std::log() and std::lgamma() for zero counts!
+        if (xi == 0.0) {
+            pout[i] = -lambda_i;
+        } else {
+            // General case: x * log(lambda) - lambda - log(x!)
+            pout[i] = xi * std::log(lambda_i) - lambda_i - std::lgamma(xi + 1.0);
+        }
+    }
 }
 
-vec log_dbinom (const vec &x, const vec &size, const vec &prob) {
-  uword n = x.n_rows;
-  vec out(n);
-  for (uword i = 0; i < n; ++i) {
-    out.at(i) = R::dbinom(x.at(i), size.at(i), prob.at(i), 1);
-  }
-  return out;
+inline void log_dbbinom_void (const arma::vec &x, const arma::vec &size,
+                       const arma::vec &prob, const double phi,
+                       arma::vec &out) {
+    arma::uword n = x.n_elem;
+    const double* px = x.memptr();
+    const double* ps = size.memptr();
+    const double* pp = prob.memptr();
+    double* pout = out.memptr();
+    double lgamma_phi = std::lgamma(phi);
+    for (arma::uword i = 0; i < n; ++i) {
+        double xi = px[i];
+        double ni = ps[i];
+        double pi = pp[i];
+        double A = phi * pi;
+        double B = phi * (1.0 - pi);
+        // Pre-compute the denominator for the beta function's numerator.
+        // It only depends on 'ni' and 'phi', and is used in every branch.
+        double lgamma_n_phi = std::lgamma(ni + phi);
+        if (xi == 0.0) {
+            // Short-circuit for x = 0
+            // log_binom is 0. log(Gamma(A)) completely cancels out.
+            pout[i] = std::lgamma(ni + B) - lgamma_n_phi + lgamma_phi - std::lgamma(B);
+        } else if (xi == ni) {
+            // Short-circuit for x = n
+            // log_binom is 0. log(Gamma(B)) completely cancels out.
+            pout[i] = std::lgamma(ni + A) - lgamma_n_phi + lgamma_phi - std::lgamma(A);
+        } else {
+            // General case for 0 < x < size
+            // 1. Log Binomial Coefficient: log( n! / (x! * (n-x)!) )
+            double log_binom = std::lgamma(ni + 1.0) - std::lgamma(xi + 1.0) - std::lgamma(ni - xi + 1.0);
+            // 2. Log Beta Numerator: log( B(x+A, n-x+B) )
+            double log_beta_num = std::lgamma(xi + A) + std::lgamma(ni - xi + B) - lgamma_n_phi;
+            // 3. Log Beta Denominator: log( B(A, B) )
+            double log_beta_den = std::lgamma(A) + std::lgamma(B) - lgamma_phi;
+            pout[i] = log_binom + log_beta_num - log_beta_den;
+        }
+    }
 }
 
-vec log_dpois (const vec &x, const vec &lambda) {
-  uword n = x.n_rows;
-  vec out(n);
-  for (uword i = 0; i < n; ++i) {
-    out.at(i) = R::dpois(x.at(i), lambda.at(i), 1);
-  }
-  return out;
+inline void log_dbernoulli_void (const arma::vec &x, const arma::vec &prob,
+                            arma::vec &out) {
+    arma::uword n = x.n_elem;
+    const double* px = x.memptr();
+    const double* pp = prob.memptr();
+    double* pout = out.memptr();
+    for (arma::uword i = 0; i < n; ++i) {
+        double p_val = (px[i] > 0.0) ? pp[i] : (1.0 - pp[i]);
+        pout[i] = std::log(p_val);
+    }
 }
 
-vec log_dbbinom (const vec &x, const vec &size, const vec &prob,
-                 const double &phi) {
-  vec A = phi * prob;
-  vec B = phi * (1.0 - prob);
-  vec log_numerator = lbeta_arma(x + A, size - x + B);
-  vec log_denominator = lbeta_arma(A, B);
-  vec fact = lchoose_arma(size, x);
-  vec out = fact + log_numerator - log_denominator;
-  return out;
-}
-
-vec log_dnbinom (const vec &x, const vec &mu, const double &size) {
+vec log_dnbinom2 (const vec &x, const vec &mu, const double &size) {
   vec log_mu_size = log(mu + size);
   vec comp1 = lgamma(x + size) - lgamma(size) - lgamma(x + 1);
   vec comp2 = size * log(size) - size * log_mu_size;
@@ -402,11 +486,43 @@ vec log_dnbinom (const vec &x, const vec &mu, const double &size) {
   return out;
 }
 
- vec log_dnorm (const vec &x, const vec &mu, const double &sigma) {
-  vec sigmas(x.n_rows);
-  sigmas.fill(sigma);
-  vec out = log_normpdf(x, mu, sigmas);
-  return out;
+inline void log_dnbinom_void (const vec &x, const vec &mu, const double &size,
+                         vec &out) {
+    arma::uword n = x.n_elem;
+    const double* px = x.memptr();
+    const double* pmu = mu.memptr();
+    double* pout = out.memptr();
+    double lgamma_size = std::lgamma(size);
+    double size_log_size = size * std::log(size);
+    for (arma::uword i = 0; i < n; ++i) {
+        double xi = px[i];
+        double mui = pmu[i];
+        double log_mu_size = std::log(mui + size);
+        pout[i] = std::lgamma(xi + size) - lgamma_size - std::lgamma(xi + 1.0) +
+            size_log_size - size * log_mu_size +
+            xi * (std::log(mui) - log_mu_size);
+    }
+}
+
+inline void log_dnorm_void (const vec &x, const vec &mu, const double sigma,
+                            vec &out) {
+    double constant = -std::log(sigma) - half_log2pi;
+    double var2 = 2.0 * sigma * sigma;
+    out = constant - arma::square(x - mu) / var2;
+}
+
+vec log_dnorm (const vec &x, const vec &mu, const double &sigma) {
+    double constant = -std::log(sigma) - half_log2pi;
+    double var2 = 2.0 * sigma * sigma;
+    return constant - arma::square(x - mu) / var2;
+}
+
+inline double log_dlnorm (double x, double mu, double sigma) {
+    double log_x = std::log(x);
+    double diff = log_x - mu;
+    double constant = -std::log(sigma) - half_log2pi;
+    double sq_term = (diff * diff) / (2.0 * sigma * sigma);
+    return constant - log_x - sq_term;
 }
 
 vec log_pnorm (const vec &x, const vec &mu, const double &sigma,
@@ -419,62 +535,122 @@ vec log_pnorm (const vec &x, const vec &mu, const double &sigma,
   return out;
 }
 
-vec log_dt (const vec &x, const double &df) {
-  uword n = x.n_rows;
-  vec out(n);
-  for (uword i = 0; i < n; ++i) {
-    out.at(i) = R::dt(x.at(i), df, 1);
-  }
-  return out;
+inline void log_dt_void (const vec &x, const vec &mu, const double sigma,
+                         const double df, vec &out) {
+    arma::uword n = x.n_elem;
+    const double* px = x.memptr();
+    const double* pmu = mu.memptr();
+    double* pout = out.memptr();
+    double log_sigma = std::log(sigma);
+    double half_df = 0.5 * df;
+    double half_df_plus_1 = 0.5 * (df + 1.0);
+    double const_term = std::lgamma(half_df_plus_1) - std::lgamma(half_df) -
+        0.5 * std::log(df * arma::datum::pi);
+    for (arma::uword i = 0; i < n; ++i) {
+        double xx = (px[i] - pmu[i]) / sigma;
+        pout[i] = const_term - half_df_plus_1 *
+            std::log(1.0 + (xx * xx) / df) - log_sigma;
+    }
 }
 
 vec log_dht (const vec &x, const vec &sigma, const double &df = 3.0) {
-  // log density of half Student's t with scale sigma and df degrees of freedom
-  // https://en.m.wikipedia.org/wiki/Folded-t_and_half-t_distributions
-  uword n = x.n_rows;
-  vec out(n);
-  vec log_const = std::log(2.0) + lgamma(0.5 * (df + 1.0)) - lgamma(0.5 * df) -
-    0.5 * (std::log(df) + std::log(M_PI)) - log(sigma);
-  vec log_kernel = - 0.5 * (df + 1.0) * log(1.0 + square(x) / (df * square(sigma)));
-  out = log_const + log_kernel;
-  return out;
+    // log density of half Student's t with scale sigma and df degrees of freedom
+    // https://en.m.wikipedia.org/wiki/Folded-t_and_half-t_distributions
+    uword n = x.n_rows;
+    vec out(n);
+    vec log_const = std::log(2.0) + lgamma(0.5 * (df + 1.0)) - lgamma(0.5 * df) -
+        0.5 * (std::log(df) + std::log(M_PI)) - log(sigma);
+    vec log_kernel = - 0.5 * (df + 1.0) * log(1.0 + square(x) / (df * square(sigma)));
+    out = log_const + log_kernel;
+    return out;
+}
+
+inline void log_dht_void (const vec &x, const vec &sigma,
+                          const double df, vec &out) {
+    // log density of half Student's t with scale sigma and df degrees of freedom
+    // https://en.m.wikipedia.org/wiki/Folded-t_and_half-t_distributions
+    vec log_const = std::log(2.0) + lgamma(0.5 * (df + 1.0)) -
+        lgamma(0.5 * df) - 0.5 * (std::log(df) + std::log(M_PI)) - log(sigma);
+    vec log_kernel = - 0.5 * (df + 1.0) * log(1.0 + square(x) / (df * square(sigma)));
+    out = log_const + log_kernel;
+}
+
+inline void log_dgamma_void (const vec &x, const double &shape, const vec &scale,
+                vec &out) {
+    uword n = x.n_elem;
+    const double* px = x.memptr();
+    const double* pscale = scale.memptr();
+    double* pout = out.memptr();
+    double lgamma_shape = std::lgamma(shape);
+    double shape_m1 = shape - 1.0;
+    for (uword i = 0; i < n; ++i) {
+        double x_val = px[i];
+        double scale_val = pscale[i];
+        pout[i] = -lgamma_shape - shape * std::log(scale_val)
+            + shape_m1 * std::log(x_val) - x_val / scale_val;
+    }
 }
 
 vec log_dgamma (const vec &x, const double &shape, const vec &scale) {
-  uword n = x.n_rows;
-  vec out(n);
-  for (uword i = 0; i < n; ++i) {
-    out.at(i) = R::dgamma(x.at(i), shape, scale.at(i), 1);
-  }
-  return out;
+    uword n = x.n_elem;
+    vec out(n, fill::none);
+    const double* px = x.memptr();
+    const double* pscale = scale.memptr();
+    double* pout = out.memptr();
+    double lgamma_shape = std::lgamma(shape);
+    double shape_m1 = shape - 1.0;
+    for (uword i = 0; i < n; ++i) {
+        double x_val = px[i];
+        double scale_val = pscale[i];
+        pout[i] = -lgamma_shape - shape * std::log(scale_val)
+            + shape_m1 * std::log(x_val) - x_val / scale_val;
+    }
+    return out;
 }
 
-vec log_dbeta (const vec &x, const vec &shape1, const vec &shape2) {
-  uword n = x.n_rows;
-  vec out(n);
-  for (uword i = 0; i < n; ++i) {
-    out.at(i) = R::dbeta(x.at(i), shape1.at(i), shape2.at(i), 1);
-  }
-  return out;
+inline void log_dbeta_void (const arma::vec &x, const arma::vec &shape1,
+                     const arma::vec &shape2, arma::vec &out) {
+    arma::uword n = x.n_elem;
+    const double* px = x.memptr();
+    const double* psh1 = shape1.memptr();
+    const double* psh2 = shape2.memptr();
+    double* pout = out.memptr();
+    for (arma::uword i = 0; i < n; ++i) {
+        double xi = px[i];
+        double a = psh1[i];
+        double b = psh2[i];
+        pout[i] = (a - 1.0) * std::log(xi) + (b - 1.0) * std::log(1.0 - xi) -
+            std::lgamma(a) - std::lgamma(b) + std::lgamma(a + b);
+    }
 }
 
 vec log_dmvnrm_chol (const mat &x, const mat &L) {
-  // fast log density of the multivariate normal distribution
-  // L is the Cholesky factor of the covariance matrix.
-  using arma::uword;
-  uword const n = x.n_rows, xdim = x.n_cols;
-  vec out(n);
-  mat V = inv(trimatu(L));
-  double const log_det = sum(log(V.diag())),
-    constants = -(double)xdim / 2.0 * log2pi,
-    other_terms = constants + log_det;
-  rowvec z_i(xdim);
-  for (uword i = 0; i < n; i++) {
-    z_i = x.row(i);
-    inplace_UpperTrimat_mult(z_i, V);
-    out.at(i) = other_terms - 0.5 * dot(z_i, z_i);
-  }
-  return out;
+    uword const n = x.n_rows, k = x.n_cols;
+    vec out(n, arma::fill::none);
+    mat V = inv(trimatu(L));
+    double log_det = -arma::sum(arma::log(L.diag()));
+    double constants = -(double)k / 2.0 * log2pi;
+    double other_terms = constants + log_det;
+    std::vector<double> z(k);
+    for (uword i = 0; i < n; ++i) {
+        for(uword j = 0; j < k; ++j) {
+            z[j] = x.at(i, j);
+        }
+        for (uword j = k; j-- > 0;) {
+            double tmp = 0.0;
+            const double* col_j = V.colptr(j);
+            for (uword c = 0; c <= j; ++c) {
+                tmp += col_j[c] * z[c];
+            }
+            z[j] = tmp;
+        }
+        double sq_dist = 0.0;
+        for(uword j = 0; j < k; ++j) {
+            sq_dist += z[j] * z[j];
+        }
+        out[i] = other_terms - 0.5 * sq_dist;
+    }
+    return out;
 }
 
 vec log_dmvnrm (const mat &x, const mat &D) {
@@ -496,29 +672,101 @@ vec log_dmvnrm (const mat &x, const mat &D) {
   return out;
 }
 
+inline void linpred_surv_inplace2(field<mat> &eta,
+                                 const field<mat> &X, const field<vec> &betas,
+                                 const field<mat> &Z, const field<mat> &b,
+                                 const uvec &id) {
+    uword n_outcomes = X.n_elem;
+    for (uword i = 0; i < n_outcomes; ++i) {
+        const mat& X_i = X.at(i);
+        const vec& betas_i = betas.at(i);
+        const mat& Z_i = Z.at(i);
+        const mat& b_i = b.at(i);
+        uword n_betas = betas_i.n_rows;
+        uword n_REs = b_i.n_cols;
+        uword n_forms = X_i.n_cols / n_betas;
+        uword N = X_i.n_rows;
+        for (uword j = 0; j < n_forms; ++j) {
+            uword j_beta_start = j * n_betas;
+            uword j_beta_end = j_beta_start + n_betas - 1;
+            eta.at(i).col(j) = X_i.cols(j_beta_start, j_beta_end) * betas_i;
+            uword j_RE_start = j * n_REs;
+            double* eta_col_ptr = eta.at(i).colptr(j);
+            const uword* id_ptr = id.memptr();
+            for (uword k = 0; k < n_REs; ++k) {
+                const double* Z_col_ptr = Z_i.colptr(j_RE_start + k);
+                const double* b_col_ptr = b_i.colptr(k);
+                for (uword obs = 0; obs < N; ++obs) {
+                    eta_col_ptr[obs] += Z_col_ptr[obs] * b_col_ptr[id_ptr[obs]];
+                }
+            }
+        }
+    }
+}
+
+inline void linpred_surv_inplace(field<mat> &eta,
+                                 const field<mat> &X, const field<vec> &betas,
+                                 const field<mat> &Z, const field<mat> &b,
+                                 const uvec &id) {
+    uword n_outcomes = X.n_elem;
+    for (uword i = 0; i < n_outcomes; ++i) {
+        const mat& X_i = X.at(i);
+        const vec& betas_i = betas.at(i);
+        const mat& Z_i = Z.at(i);
+        const mat& b_i = b.at(i);
+        uword n_betas = betas_i.n_rows;
+        uword n_REs = b_i.n_cols;
+        uword n_forms = X_i.n_cols / n_betas;
+        uword N = X_i.n_rows;
+        const uword* id_ptr = id.memptr();
+        for (uword j = 0; j < n_forms; ++j) {
+            double* eta_col_ptr = eta.at(i).colptr(j);
+            std::memset(eta_col_ptr, 0, N * sizeof(double));
+            uword j_beta_start = j * n_betas;
+            for (uword k = 0; k < n_betas; ++k) {
+                const double* X_col_ptr = X_i.colptr(j_beta_start + k);
+                double beta_val = betas_i[k];
+                for (uword obs = 0; obs < N; ++obs) {
+                    eta_col_ptr[obs] += X_col_ptr[obs] * beta_val;
+                }
+            }
+            uword j_RE_start = j * n_REs;
+            for (uword k = 0; k < n_REs; ++k) {
+                const double* Z_col_ptr = Z_i.colptr(j_RE_start + k);
+                const double* b_col_ptr = b_i.colptr(k);
+                for (uword obs = 0; obs < N; ++obs) {
+                    eta_col_ptr[obs] += Z_col_ptr[obs] * b_col_ptr[id_ptr[obs]];
+                }
+            }
+        }
+    }
+}
+
 field<mat> linpred_surv (const field<mat> &X, const field<vec> &betas,
                          const field<mat> &Z, const field<mat> &b,
                          const uvec &id) {
-  uword n_outcomes = X.n_elem;
-  field<mat> out(n_outcomes);
-  for (uword i = 0; i < n_outcomes; ++i) {
-    mat X_i = X.at(i);
-    vec betas_i = betas.at(i);
-    mat Z_i = Z.at(i);
-    mat b_i = b.at(i);
-    uword n_betas = betas_i.n_rows;
-    uword n_REs = b_i.n_cols;
-    uword n_forms = X_i.n_cols / n_betas;
-    mat out_i(X_i.n_rows, n_forms);
-    out.at(i) = out_i;
-    for (uword j = 0; j < n_forms; ++j) {
-      mat X_ij = X_i.cols(j * n_betas, (j + 1) * n_betas - 1);
-      mat Z_ij = Z_i.cols(j * n_REs, (j + 1) * n_REs - 1);
-      out.at(i).col(j) = X_ij * betas_i +
-        arma::sum(Z_ij % b_i.rows(id), 1);
+    uword n_outcomes = X.n_elem;
+    field<mat> out(n_outcomes);
+    for (uword i = 0; i < n_outcomes; ++i) {
+        const mat& X_i = X.at(i);
+        const vec& betas_i = betas.at(i);
+        const mat& Z_i = Z.at(i);
+        const mat& b_i = b.at(i);
+        uword n_betas = betas_i.n_rows;
+        uword n_REs = b_i.n_cols;
+        uword n_forms = X_i.n_cols / n_betas;
+        out.at(i).set_size(X_i.n_rows, n_forms);
+        mat b_id = b_i.rows(id);
+        for (uword j = 0; j < n_forms; ++j) {
+            uword j_beta_start = j * n_betas;
+            uword j_beta_end = j_beta_start + n_betas - 1;
+            uword j_RE_start = j * n_REs;
+            uword j_RE_end = j_RE_start + n_REs - 1;
+            out.at(i).col(j) = X_i.cols(j_beta_start, j_beta_end) * betas_i +
+                arma::sum(Z_i.cols(j_RE_start, j_RE_end) % b_id, 1);
+        }
     }
-  }
-  return out;
+    return out;
 }
 
 field<vec> linpred_mixed (const field<mat> &X, const field<vec> &betas,
@@ -527,14 +775,81 @@ field<vec> linpred_mixed (const field<mat> &X, const field<vec> &betas,
   uword n_outcomes = X.n_elem;
   field<vec> out(n_outcomes);
   for (uword i = 0; i < n_outcomes; ++i) {
-    mat X_i = X.at(i);
-    vec betas_i = betas.at(i);
-    mat Z_i = Z.at(i);
-    mat b_i = b.at(i);
-    uvec id_i = id.at(i);
+    const mat& X_i = X.at(i);
+    const vec& betas_i = betas.at(i);
+    const mat& Z_i = Z.at(i);
+    const mat& b_i = b.at(i);
+    const uvec& id_i = id.at(i);
     out.at(i) = X_i * betas_i + arma::sum(Z_i % b_i.rows(id_i), 1);
   }
   return out;
+}
+
+inline void linpred_mixed_inplace2 (field<vec> &eta,
+                                   const field<mat> &X,
+                                   const field<vec> &betas,
+                                   const field<mat> &Z,
+                                   const field<mat> &b,
+                                   const field<uvec> &id) {
+    uword n_outcomes = X.n_elem;
+    for (uword i = 0; i < n_outcomes; ++i) {
+        const mat& X_i = X.at(i);
+        const vec& betas_i = betas.at(i);
+        const mat& Z_i = Z.at(i);
+        const mat& b_i = b.at(i);
+        const uvec& id_i = id.at(i);
+        eta.at(i) = X_i * betas_i;
+        uword N = Z_i.n_rows;
+        uword q = Z_i.n_cols;
+        double* eta_ptr = eta.at(i).memptr();
+        const uword* id_ptr = id_i.memptr();
+        for (uword k = 0; k < q; ++k) {
+            const double* Z_col = Z_i.colptr(k);
+            const double* b_col = b_i.colptr(k);
+            for (uword obs = 0; obs < N; ++obs) {
+                eta_ptr[obs] += Z_col[obs] * b_col[id_ptr[obs]];
+            }
+        }
+    }
+}
+
+inline void linpred_mixed_inplace (field<vec> &eta,
+                                   const field<mat> &X,
+                                   const field<vec> &betas,
+                                   const field<mat> &Z,
+                                   const field<mat> &b,
+                                   const field<uvec> &id) {
+    uword n_outcomes = X.n_elem;
+    for (uword i = 0; i < n_outcomes; ++i) {
+        const mat& X_i = X.at(i);
+        const vec& betas_i = betas.at(i);
+        const mat& Z_i = Z.at(i);
+        const mat& b_i = b.at(i);
+        const uvec& id_i = id.at(i);
+
+        uword N = X_i.n_rows;
+        uword n_betas = betas_i.n_rows;
+        uword q = Z_i.n_cols;
+        double* eta_ptr = eta.at(i).memptr();
+        const uword* id_ptr = id_i.memptr();
+        std::memset(eta_ptr, 0, N * sizeof(double));
+        for (uword k = 0; k < n_betas; ++k) {
+            const double* X_col = X_i.colptr(k);
+            double beta_val = betas_i[k];
+
+            for (uword obs = 0; obs < N; ++obs) {
+                eta_ptr[obs] += X_col[obs] * beta_val;
+            }
+        }
+        for (uword k = 0; k < q; ++k) {
+            const double* Z_col = Z_i.colptr(k);
+            const double* b_col = b_i.colptr(k);
+
+            for (uword obs = 0; obs < N; ++obs) {
+                eta_ptr[obs] += Z_col[obs] * b_col[id_ptr[obs]];
+            }
+        }
+    }
 }
 
 field<vec> linpred_mixed_i (const field<vec> eta, const field<mat> &X,
@@ -547,157 +862,278 @@ field<vec> linpred_mixed_i (const field<vec> eta, const field<mat> &X,
   return out;
 }
 
-field<vec> linpred_mixed_Zb (const field<mat>& Xbetas,
-                             const field<mat> &Z, const field<mat> &b,
-                             const field<uvec> &id) {
-  uword n_outcomes = Z.n_elem;
-  field<vec> out(n_outcomes);
-  for (uword i = 0; i < n_outcomes; ++i) {
-    mat Xbetas_i = Xbetas.at(i);
-    mat Z_i = Z.at(i);
-    mat b_i = b.at(i);
-    uvec id_i = id.at(i);
-    out.at(i) = Xbetas_i + arma::sum(Z_i % b_i.rows(id_i), 1);
-  }
-  return out;
-}
-
-field<mat> Xbeta_calc (const field<mat> &X, const field<vec> &betas) {
-  uword n = X.n_elem;
-  field<mat> out(n);
-  for (uword i = 0; i < n; i++) {
-    out.at(i) = X.at(i) * betas.at(i);
-  }
-  return out;
-}
-
-cube chol_cube (const cube &S) {
-  cube out = S;
-  out.each_slice([](mat &X){X = chol(X);});
-  return out;
-}
-
-/*
-void transf_eta (mat &eta, const CharacterVector &fun_nams) {
-  uword n = eta.n_cols;
-  for (uword i = 0; i < n; i++) {
-    if (fun_nams[i] == "identity") continue;
-    if (fun_nams[i] == "expit") {
-      eta.col(i) = 1.0 / (1.0 + trunc_exp(- eta.col(i)));
-    } else if (fun_nams[i] == "exp" || fun_nams[i] == "dexp") {
-      eta.col(i) = trunc_exp(eta.col(i));
-    } else if (fun_nams[i] == "dexpit") {
-      mat pp = 1.0 / (1.0 + trunc_exp(- eta.col(i)));
-      eta.col(i) = pp * (1.0 - pp);
-    } else if (fun_nams[i] == "log") {
-      eta.col(i) = trunc_log(eta.col(i));
-    } else if (fun_nams[i] == "log2") {
-      eta.col(i) = log2(eta.col(i));
-    } else if (fun_nams[i] == "log10") {
-      eta.col(i) = log10(eta.col(i));
-    } else if (fun_nams[i] == "sqrt") {
-      eta.col(i) = sqrt(eta.col(i));
-    } else if (fun_nams[i] == "square") {
-      eta.col(i) = square(eta.col(i));
-    }
-  }
-}
-
-field<mat> create_Wlong (const field<mat> &eta, const field<uvec> &FunForms,
-                         const field<mat> &U, const field<uvec> &ind,
-                         const List &Funs_FunForms) {
-  uword n_outcomes = eta.n_elem;
-  field<mat> out(n_outcomes);
-  for (uword i = 0; i < n_outcomes; ++i) {
-    CharacterVector Funs_i = Funs_FunForms[i];
-    mat eta_i = eta.at(i);
-    transf_eta(eta_i, Funs_i);
-    uvec FF_i = FunForms.at(i);
-    mat U_i = U.at(i);
-    uvec ind_i = ind.at(i);
-    mat Wlong_i(eta_i.n_rows, U_i.n_cols, fill::ones);
-    Wlong_i.cols(FF_i) %= eta_i.cols(ind_i);
-    out.at(i) = U_i % Wlong_i;
-  }
-  return out;
-}
-*/
-
-mat transf_eta (const mat &eta, const CharacterVector &fun_nams) {
-  uword k = fun_nams.length();
-  mat out(eta.n_rows, k, fill::zeros);
-  for (uword i = 0; i < k; i++) {
-    if (fun_nams[i] == "identity") {
-      out.col(i) = eta;
-    } else if (fun_nams[i] == "abs") {
-      out.col(i) = abs(eta);
-    } else if (fun_nams[i] == "expit") {
-      out.col(i) = 1.0 / (1.0 + trunc_exp(- eta));
-    } else if (fun_nams[i] == "exp" || fun_nams[i] == "dexp") {
-      out.col(i) = trunc_exp(eta);
-    } else if (fun_nams[i] == "dexpit") {
-      mat pp = 1.0 / (1.0 + trunc_exp(- eta));
-      out.col(i) = pp * (1.0 - pp);
-    } else if (fun_nams[i] == "log") {
-      out.col(i) = trunc_log(eta);
-    } else if (fun_nams[i] == "log2") {
-      out.col(i) = log2(eta);
-    } else if (fun_nams[i] == "log10") {
-      out.col(i) = log10(eta);
-    } else if (fun_nams[i] == "sqrt") {
-      out.col(i) = sqrt(eta);
-    } else if (fun_nams[i] == "poly2") {
-      out.col(i) = square(eta);
-    } else if (fun_nams[i] == "poly3") {
-      out.col(i) = pow(eta, 3);
-    } else if (fun_nams[i] == "poly4") {
-      out.col(i) = pow(eta, 4);
-    } else if (fun_nams[i] == "poly2(expit)") {
-      out.col(i) = square(1.0 / (1.0 + trunc_exp(- eta)));
-    } else if (fun_nams[i] == "poly3(expit)") {
-      out.col(i) = pow(1.0 / (1.0 + trunc_exp(- eta)), 3);
-    } else if (fun_nams[i] == "poly4(expit)") {
-      out.col(i) = pow(1.0 / (1.0 + trunc_exp(- eta)), 4);
-    }
-  }
-  return out;
-}
-
-field<mat> create_Wlong (const field<mat> &eta, const field<mat> &U,
-                         const field<uvec> &FunForms,
-                         const List &Funs_FunForms) {
-  uword n_outcomes = eta.n_elem;
-  field<mat> out(n_outcomes);
-  for (uword i = 0; i < n_outcomes; ++i) {
-    mat eta_i = eta.at(i);
-    List Funs_i = Funs_FunForms[i];
-    uword n = Funs_i.length();
-    field<mat> res(n);
-    for (uword j = 0; j < n; ++j) {
-      res.at(j) = transf_eta(eta_i.col(j), Funs_i[j]);
-    }
-    mat Res = docall_cbindF(res);
-    uvec FF_i = FunForms.at(i);
-    mat U_i = U.at(i);
-    mat Wlong_i(U_i.n_rows, U_i.n_cols, fill::ones);
-    Wlong_i.cols(FF_i) %= Res;
-    out.at(i) = U_i % Wlong_i;
-  }
-  return out;
-}
-
 mat calculate_Wlong (const field<mat> &X, const field<mat> &Z,
                      const field<mat> &U, const mat &Wlong_bar,
                      const mat &Wlong_sds,
                      const field<vec> &betas, const field<mat> &b,
                      const uvec &id, const field<uvec> &FunForms,
                      const List &Funs_FunForms) {
-  field<mat> eta = linpred_surv(X, betas, Z, b, id);
-  mat Wlong =
-    docall_cbindF(create_Wlong(eta, U, FunForms, Funs_FunForms));
-  Wlong.each_row() -= Wlong_bar;
-  Wlong.each_row() /= Wlong_sds;
-  return Wlong;
+    uword n_outcomes_X = X.n_elem;
+    field<mat> eta(n_outcomes_X);
+    for (uword i = 0; i < n_outcomes_X; ++i) {
+        uword n_forms = X.at(i).n_cols / betas.at(i).n_rows;
+        eta.at(i).set_size(X.at(i).n_rows, n_forms);
+    }
+    linpred_surv_inplace(eta, X, betas, Z, b, id);
+    uword n_outcomes = U.n_elem;
+    uword N = U.at(0).n_rows;
+    uword total_cols = 0;
+    uvec col_starts(n_outcomes);
+    for (uword i = 0; i < n_outcomes; ++i) {
+        col_starts.at(i) = total_cols;
+        total_cols += U.at(i).n_cols;
+    }
+    mat Wlong(N, total_cols, arma::fill::none);
+    for (uword i = 0; i < n_outcomes; ++i) {
+        uword start_col = col_starts.at(i);
+        uword end_col = start_col + U.at(i).n_cols - 1;
+        Wlong.cols(start_col, end_col) = U.at(i);
+        const mat& eta_i = eta.at(i);
+        const uvec& FF_i = FunForms.at(i);
+        List Funs_i = Funs_FunForms[i];
+        uword current_col = 0;
+        uword n_funs = Funs_i.length();
+        for (uword j = 0; j < n_funs; ++j) {
+            const vec& eta_col = eta_i.col(j);
+            IntegerVector fun_ints = Funs_i[j];
+            uword k = fun_ints.length();
+            for (uword f = 0; f < k; ++f) {
+                uword target_col = start_col + FF_i.at(current_col);
+                auto out_col = Wlong.col(target_col);
+                int fun = fun_ints[f];
+                switch (fun) {
+                case 1: // "identity"
+                    out_col %= eta_col;
+                    break;
+                case 2: // "abs"
+                    out_col %= arma::abs(eta_col);
+                    break;
+                case 3: // "expit"
+                    out_col %= 1.0 / (1.0 + trunc_exp(-eta_col));
+                    break;
+                case 4: // "exp" or "dexp"
+                    out_col %= trunc_exp(eta_col);
+                    break;
+                case 5: // "dexpit"
+                    { // Brackets keep 'pp' safely scoped within this case
+                        vec pp = 1.0 / (1.0 + trunc_exp(-eta_col));
+                        out_col %= pp % (1.0 - pp);
+                        break;
+                    }
+                case 6: // "log"
+                    out_col %= trunc_log(eta_col);
+                    break;
+                case 7: // "log2"
+                    out_col %= arma::log2(eta_col);
+                    break;
+                case 8: // "log10"
+                    out_col %= arma::log10(eta_col);
+                    break;
+                case 9: // "sqrt"
+                    out_col %= arma::sqrt(eta_col);
+                    break;
+                case 10: // "poly2"
+                    out_col %= arma::square(eta_col);
+                    break;
+                case 11: // "poly3"
+                    out_col %= eta_col % arma::square(eta_col);
+                    break;
+                case 12: // "poly4"
+                    out_col %= arma::square(arma::square(eta_col));
+                    break;
+                case 13: // "poly2(expit)"
+                    out_col %= arma::square(1.0 / (1.0 + trunc_exp(-eta_col)));
+                    break;
+                case 14: // "poly3(expit)"
+                    {
+                        vec pp = 1.0 / (1.0 + trunc_exp(-eta_col));
+                        out_col %= pp % arma::square(pp);
+                        break;
+                    }
+                case 15: // "poly4(expit)"
+                    out_col %= arma::square(arma::square(1.0 / (1.0 + trunc_exp(-eta_col))));
+                    break;
+                default:
+                    Rcpp::stop("Unknown transformation function integer code.");
+                }
+                current_col++;
+            }
+        }
+    }
+    const double* bar_ptr = Wlong_bar.memptr();
+    const double* inv_sds_ptr = Wlong_sds.memptr();
+    for (uword c = 0; c < total_cols; ++c) {
+        double bar = bar_ptr[c];
+        double inv_sd = inv_sds_ptr[c];
+        double* col_ptr = Wlong.colptr(c);
+        for (uword r = 0; r < N; ++r) {
+            col_ptr[r] = (col_ptr[r] - bar) * inv_sd;
+        }
+    }
+    return Wlong;
+}
+
+inline void calculate_Wlong_inplace2 (mat &Wlong, field<mat> &eta,
+                                     const field<mat> &X, const field<mat> &Z,
+                                     const field<mat> &U, const mat &Wlong_bar,
+                                     const mat &Wlong_sds,
+                                     const field<vec> &betas, const field<mat> &b,
+                                     const uvec &id, const field<uvec> &FunForms,
+                                     const List &Funs_FunForms) {
+    linpred_surv_inplace(eta, X, betas, Z, b, id);
+    uword n_outcomes = U.n_elem;
+    uword total_cols = 0;
+    uvec col_starts(n_outcomes);
+    for (uword i = 0; i < n_outcomes; ++i) {
+        col_starts.at(i) = total_cols;
+        total_cols += U.at(i).n_cols;
+    }
+    for (uword i = 0; i < n_outcomes; ++i) {
+        uword start_col = col_starts.at(i);
+        uword end_col = start_col + U.at(i).n_cols - 1;
+        Wlong.cols(start_col, end_col) = U.at(i);
+        const mat& eta_i = eta.at(i);
+        const uvec& FF_i = FunForms.at(i);
+        List Funs_i = Funs_FunForms[i];
+        uword current_col = 0;
+        uword n_funs = Funs_i.length();
+        for (uword j = 0; j < n_funs; ++j) {
+            const vec& eta_col = eta_i.col(j);
+            IntegerVector fun_ints = Funs_i[j];
+            uword k = fun_ints.length();
+            for (uword f = 0; f < k; ++f) {
+                uword target_col = start_col + FF_i.at(current_col);
+                auto out_col = Wlong.col(target_col);
+                int fun = fun_ints[f];
+                switch (fun) {
+                case 1: out_col %= eta_col; break;
+                case 2: out_col %= arma::abs(eta_col); break;
+                case 3: out_col %= 1.0 / (1.0 + trunc_exp(-eta_col)); break;
+                case 4: out_col %= trunc_exp(eta_col); break;
+                case 5: {
+                    vec pp = 1.0 / (1.0 + trunc_exp(-eta_col));
+                    out_col %= pp % (1.0 - pp);
+                    break;
+                }
+                case 6: out_col %= trunc_log(eta_col); break;
+                case 7: out_col %= arma::log2(eta_col); break;
+                case 8: out_col %= arma::log10(eta_col); break;
+                case 9: out_col %= arma::sqrt(eta_col); break;
+                case 10: out_col %= arma::square(eta_col); break;
+                case 11: out_col %= eta_col % arma::square(eta_col); break;
+                case 12: out_col %= arma::square(arma::square(eta_col)); break;
+                case 13: out_col %= arma::square(1.0 / (1.0 + trunc_exp(-eta_col))); break;
+                case 14: {
+                    vec pp = 1.0 / (1.0 + trunc_exp(-eta_col));
+                    out_col %= pp % arma::square(pp);
+                    break;
+                }
+                case 15: out_col %= arma::square(arma::square(1.0 / (1.0 + trunc_exp(-eta_col)))); break;
+                default: Rcpp::stop("Unknown transformation function integer code.");
+                }
+                current_col++;
+            }
+        }
+    }
+    //Wlong.each_row() -= Wlong_bar;
+    //Wlong.each_row() /= Wlong_sds;
+    uword n_rows = Wlong.n_rows;
+    uword n_cols = Wlong.n_cols;
+    const double* bar_ptr = Wlong_bar.memptr();
+    const double* inv_sds_ptr = Wlong_sds.memptr();
+    for (uword c = 0; c < n_cols; ++c) {
+        double bar = bar_ptr[c];
+        double inv_sd = inv_sds_ptr[c];
+        double* col_ptr = Wlong.colptr(c);
+        for (uword r = 0; r < n_rows; ++r) {
+            col_ptr[r] = (col_ptr[r] - bar) * inv_sd;
+        }
+    }
+}
+
+inline void calculate_Wlong_inplace (mat &Wlong, field<mat> &eta,
+                                     const field<mat> &X, const field<mat> &Z,
+                                     const field<mat> &U, const mat &Wlong_bar,
+                                     const mat &Wlong_sds,
+                                     const field<vec> &betas, const field<mat> &b,
+                                     const uvec &id, const field<uvec> &FunForms,
+                                     const List &Funs_FunForms) {
+    linpred_surv_inplace(eta, X, betas, Z, b, id);
+    uword n_outcomes = U.n_elem;
+    uword total_cols = 0;
+    uvec col_starts(n_outcomes);
+    for (uword i = 0; i < n_outcomes; ++i) {
+        col_starts.at(i) = total_cols;
+        total_cols += U.at(i).n_cols;
+    }
+    uword N = Wlong.n_rows;
+    for (uword i = 0; i < n_outcomes; ++i) {
+        uword start_col = col_starts.at(i);
+        uword end_col = start_col + U.at(i).n_cols - 1;
+        Wlong.cols(start_col, end_col) = U.at(i);
+        const mat& eta_i = eta.at(i);
+        const uvec& FF_i = FunForms.at(i);
+        List Funs_i = Funs_FunForms[i];
+        uword current_col = 0;
+        uword n_funs = Funs_i.length();
+        for (uword j = 0; j < n_funs; ++j) {
+            // 1. Extract raw pointer, bypassing subview instantiation overhead
+            const double* eta_ptr = eta_i.colptr(j);
+            // 2. Wrap in Armadillo vector (Zero allocation, Strict size)
+            arma::vec eta_vec(const_cast<double*>(eta_ptr), N, false, true);
+            IntegerVector fun_ints = Funs_i[j];
+            uword k = fun_ints.length();
+            for (uword f = 0; f < k; ++f) {
+                uword target_col = start_col + FF_i.at(current_col);
+                // 3. Extract raw target pointer and wrap it
+                double* out_ptr = Wlong.colptr(target_col);
+                arma::vec out_vec(out_ptr, N, false, true);
+                int fun = fun_ints[f];
+                switch (fun) {
+                case 1: out_vec %= eta_vec; break;
+                case 2: out_vec %= arma::abs(eta_vec); break;
+                case 3: out_vec %= 1.0 / (1.0 + arma::trunc_exp(-eta_vec)); break;
+                case 4: out_vec %= arma::trunc_exp(eta_vec); break;
+                case 5: {
+                    auto pp = 1.0 / (1.0 + arma::trunc_exp(-eta_vec));
+                    out_vec %= pp % (1.0 - pp);
+                    break;
+                }
+                case 6: out_vec %= arma::trunc_log(eta_vec); break;
+                case 7: out_vec %= arma::log2(eta_vec); break;
+                case 8: out_vec %= arma::log10(eta_vec); break;
+                case 9: out_vec %= arma::sqrt(eta_vec); break;
+                case 10: out_vec %= arma::square(eta_vec); break;
+                case 11: out_vec %= eta_vec % arma::square(eta_vec); break;
+                case 12: out_vec %= arma::square(arma::square(eta_vec)); break;
+                case 13: out_vec %=
+                    arma::square(1.0 / (1.0 + arma::trunc_exp(-eta_vec))); break;
+                case 14: {
+                    auto pp = 1.0 / (1.0 + arma::trunc_exp(-eta_vec));
+                    out_vec %= pp % arma::square(pp);
+                    break;
+                }
+                case 15: out_vec %=
+                    arma::square(arma::square(1.0 /
+                    (1.0 + arma::trunc_exp(-eta_vec)))); break;
+                default: Rcpp::stop("Unknown transformation function integer code.");
+                }
+                current_col++;
+            }
+        }
+    }
+    uword n_rows = Wlong.n_rows;
+    uword n_cols = Wlong.n_cols;
+    const double* bar_ptr = Wlong_bar.memptr();
+    const double* inv_sds_ptr = Wlong_sds.memptr();
+    for (uword c = 0; c < n_cols; ++c) {
+        double bar = bar_ptr[c];
+        double inv_sd = inv_sds_ptr[c];
+        double* col_ptr = Wlong.colptr(c);
+        for (uword r = 0; r < n_rows; ++r) {
+            col_ptr[r] = (col_ptr[r] - bar) * inv_sd;
+        }
+    }
 }
 
 mat bdiagF (const field<mat> &F) { // builds a block diagonal matrix given a field of matrices
@@ -717,7 +1153,26 @@ mat bdiagF (const field<mat> &F) { // builds a block diagonal matrix given a fie
   return B;
 }
 
-vec docall_rbindF (const field<vec> &F) { // binds a field of vectors into one vector
+inline vec docall_rbindF (const field<vec> &F) {
+    uword n = F.n_elem;
+    uword total_rows = 0;
+    for (uword i = 0; i < n; ++i) {
+        total_rows += F.at(i).n_elem;
+    }
+    vec V(total_rows, arma::fill::none);
+    double* V_ptr = V.memptr();
+    uword current_pos = 0;
+    for (uword i = 0; i < n; ++i) {
+        uword len = F.at(i).n_elem;
+        if (len > 0) {
+            std::memcpy(V_ptr + current_pos, F.at(i).memptr(), len * sizeof(double));
+            current_pos += len;
+        }
+    }
+    return V;
+}
+
+vec docall_rbindF_old (const field<vec> &F) { // binds a field of vectors into one vector
   uword n = F.n_elem;
   uword nrows = 0;
   uvec rows(n);
@@ -765,7 +1220,7 @@ mat add_zero_rows (const mat &M, // adds zero-rows to a matrix M
   return Res;
 }
 
-mat rank1_update (const mat &U, // performs rank-1 update. If U = chol(M), returns chol(M + v * v.t())
+mat rank1_update_old (const mat &U, // performs rank-1 update. If U = chol(M), returns chol(M + v * v.t())
                   const vec &v) {
 
   uword n = v.n_elem;
@@ -786,7 +1241,29 @@ mat rank1_update (const mat &U, // performs rank-1 update. If U = chol(M), retur
   return Res;
 }
 
-mat chol_update(const mat &U, // If U = chol(M), returns chol(M.submat(keep, keep))
+mat rank1_update (const mat &U, const vec &v) {
+    uword n = v.n_elem;
+    mat Res = U;
+    vec v2 = v;
+    for (uword i = 0; i < n; ++i) {
+        double res_ii = Res.at(i, i);
+        double v2_i = v2.at(i);
+        double r = std::sqrt(res_ii * res_ii + v2_i * v2_i);
+        double c = r / res_ii;
+        double s = v2_i / res_ii;
+        Res.at(i, i) = r;
+        for (uword j = i + 1; j < n; ++j) {
+            double res_ij = Res.at(i, j);
+            double v2_j   = v2.at(j);
+            double new_res_ij = (res_ij + s * v2_j) / c;
+            Res.at(i, j) = new_res_ij;
+            v2.at(j) = c * v2_j - s * new_res_ij;
+        }
+    }
+    return Res;
+}
+
+mat chol_update_old(const mat &U, // If U = chol(M), returns chol(M.submat(keep, keep))
                 const uvec &keep) { // keep must be a sorted vector, i.e, {2, 4, 5}, and counts from 0
 
   // to improve: later we can try to extend this approach further to obtain inv(U) from the required inv(U_i)
@@ -809,6 +1286,84 @@ mat chol_update(const mat &U, // If U = chol(M), returns chol(M.submat(keep, kee
     rem = rem - 1;
   }
   return Res;
+}
+
+mat chol_update (const mat &U, const uvec &keep) {
+    uword N = U.n_cols;
+    mat Res = U; // Only one deep copy made
+    // 1. Generate the removal indices exactly once
+    uvec rem = regspace<uvec>(0, N - 1);
+    rem.shed_rows(keep);
+    // 2. Process each removal index without ever shrinking the matrix
+    for (uword i = 0; i < rem.n_elem; ++i) {
+        uword k = rem.at(i);
+        // 3. INLINED RANK-1 UPDATE
+        // We map the submatrix directly to the global coordinates of Res.
+        for (uword row_idx = k + 1; row_idx < N; ++row_idx) {
+            double res_ii = Res.at(row_idx, row_idx);
+            // Res.at(k, row_idx) perfectly acts as our 'v' vector!
+            double v_i    = Res.at(k, row_idx);
+            // Fast hypotenuse math (avoids pow)
+            double r = std::sqrt(res_ii * res_ii + v_i * v_i);
+            double c = r / res_ii;
+            double s = v_i / res_ii;
+            Res.at(row_idx, row_idx) = r;
+            for (uword col_idx = row_idx + 1; col_idx < N; ++col_idx) {
+                double res_ij = Res.at(row_idx, col_idx);
+                double v_j    = Res.at(k, col_idx);
+                double new_res_ij = (res_ij + s * v_j) / c;
+                Res.at(row_idx, col_idx) = new_res_ij;
+                // Overwrite the removed row to act as our updated 'v' for the next step
+                Res.at(k, col_idx) = c * v_j - s * new_res_ij;
+            }
+        }
+    }
+    // 4. Extract the final submatrix in one single allocation
+    return Res.submat(keep, keep);
+}
+
+inline void chol_update_inplace (const mat &U, const uvec &keep, const uvec &rem,
+                                 mat &Res_workspace, mat &out_mat) {
+    uword N = U.n_cols;
+    // Zero-Allocation Deep Copy
+    // std::memcpy is the absolute fastest way to copy matrix data in C++
+    std::memcpy(Res_workspace.memptr(), U.memptr(), U.n_elem * sizeof(double));
+    // Process each removal index (Givens Rotations)
+    const uword* rem_ptr = rem.memptr();
+    for (uword i = 0; i < rem.n_elem; ++i) {
+        uword k = rem_ptr[i];
+        for (uword row_idx = k + 1; row_idx < N; ++row_idx) {
+            double res_ii = Res_workspace.at(row_idx, row_idx);
+            double v_i    = Res_workspace.at(k, row_idx);
+            double r = std::sqrt(res_ii * res_ii + v_i * v_i);
+            double c = r / res_ii;
+            double s = v_i / res_ii;
+            Res_workspace.at(row_idx, row_idx) = r;
+            for (uword col_idx = row_idx + 1; col_idx < N; ++col_idx) {
+                double res_ij = Res_workspace.at(row_idx, col_idx);
+                double v_j    = Res_workspace.at(k, col_idx);
+                double new_res_ij = (res_ij + s * v_j) / c;
+                Res_workspace.at(row_idx, col_idx) = new_res_ij;
+                Res_workspace.at(k, col_idx) = c * v_j - s * new_res_ij;
+            }
+        }
+    }
+    // Fused Submatrix Extraction & trimatu (Zero Allocations)
+    uword keep_N = keep.n_elem;
+    const uword* keep_ptr = keep.memptr();
+    for (uword col = 0; col < keep_N; ++col) {
+        uword global_col = keep_ptr[col];
+        for (uword row = 0; row < keep_N; ++row) {
+            if (row > col) {
+                // Equivalent to trimatu: explicitly zero the lower triangle
+                out_mat.at(row, col) = 0.0;
+            } else {
+                // Extract from the updated Res_workspace
+                uword global_row = keep_ptr[row];
+                out_mat.at(row, col) = Res_workspace.at(global_row, global_col);
+            }
+        }
+    }
 }
 
 uword n_field (const field<vec> &x) {

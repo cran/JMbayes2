@@ -166,10 +166,10 @@ summary.jm <- function (object, ...) {
     if(out$recurrent & out$any_terminal) {
       out$Survival <- do.call(rbind, list(tab_f("gammas"), tab_f("alphas"),
                                           tab_f("alphaF")))
+      out$sigmaF <- tab_f("sigmaF")[c(1, 3, 4)]
     } else {
       out$Survival <- do.call(rbind, list(tab_f("gammas"), tab_f("alphas")))
     }
-    out$sigmaF <- tab_f("sigmaF")[c(1, 3, 4)]
     out$fit_stats <- object$fit_stats
     class(out) <- "summary.jm"
     out
@@ -178,10 +178,10 @@ summary.jm <- function (object, ...) {
 print.summary.jm <- function (x, digits = max(4, getOption("digits") - 4), ...) {
     cat("\nCall:\n", printCall(x$call), "\n\n", sep = "")
     cat("Data Descriptives:")
-    cat("\nNumber of Groups: ", x$n, "\t\tNumber of events: ",
+    cat("\nNumber of groups: ", x$n, "\t\tNumber of events: ",
         sum(x$event == 1), " (", round(100 * mean(x$event == 1), 1),
         "%)", sep = "")
-    cat("\nNumber of Observations:")
+    cat("\nNumber of observations:")
     obs <- x$descrpt
     for (i in 1:nrow(obs)) {
         cat("\n  ", row.names(obs)[i], ": ", obs[[1]][i],
@@ -222,11 +222,11 @@ print.summary.jm <- function (x, digits = max(4, getOption("digits") - 4), ...) 
       cat("\nFrailty standard deviation:\n")
       print(round(x[["sigmaF"]], digits))
     }
-    cat("\nSurvival Outcome:\n")
+    cat("\nSurvival outcome:\n")
     print(round(x[["Survival"]], digits))
     n_outcomes <- length(x$families)
     for (i in seq_len(n_outcomes)) {
-        cat("\nLongitudinal Outcome: ", x$respVars[i],
+        cat("\nLongitudinal outcome: ", x$respVars[i],
             " (family = ", x$families[[i]][["family"]],
             ", link = ", x$families[[i]][["link"]],
             ")", "\n", sep = "")
@@ -539,6 +539,20 @@ ggdensityplot.jm <- function(object,
     }
 }
 
+effectPlotData.lme <- function (object, newdata, level = 0.95, ...) {
+    termsX <- delete.response(object$terms)
+    xlevels <- mapply2(.getXlevels, termsX, object$model_info$frames$mf_FE)
+    mfX <- model.frame.default(formula = termsX, xlev = xlevels, data = newdata)
+    X <- model.matrix.default(object = termsX, data = mfX)
+    betas <- fixef(object)
+    V <- vcov(object)
+    pred <- c(X %*% betas)
+    ses <- sqrt(diag(X %*% V %*% t(X)))
+    low <- pred + qnorm((1 - level) / 2) * ses
+    upp <- pred + qnorm((1 + level) / 2) * ses
+    cbind(newdata, pred = pred, low = low, upp = upp)
+}
+
 effectPlotData.jm <- function (object, newdata, level = 0.95, ...) {
     termsX <- object$model_info$terms$terms_FE_noResp
     xlevels <- mapply2(.getXlevels, termsX, object$model_info$frames$mf_FE)
@@ -605,7 +619,7 @@ compare_jm <- function (..., type = c("marginal", "conditional"),
 print.compare_jm <- function (x, ...) {
     cat("\n")
     print.data.frame(x$table, row.names = FALSE)
-    cat("\nThe criteria are calculated based on the", x$type, "log-likelihood.")
+    cat("\nThe criteria are calculated on the basis of the", x$type, "log-likelihood.")
 }
 
 crisk_setup <- function (data, statusVar, censLevel, nameStrata = "strata",
@@ -1571,6 +1585,7 @@ simulate.jm <- function (object, nsim = 1L, seed = NULL, newdata = NULL,
             stop("'simulate.jm()' does not currently support stratified joint models.\n")
         }
         log_hazard <- function (time, subj) {
+            time[time < 1e-06] <- 1e-06
             subjj <- if (length(time) != length(subj)) rep(subj, length(time)) else subj
             tt <- if (timescale_base_hazard == "identity") time else log(time)
             W0 <- create_W0(tt, knots, Bspline_dgr, strt[subj], basis,
@@ -1591,7 +1606,8 @@ simulate.jm <- function (object, nsim = 1L, seed = NULL, newdata = NULL,
             id_GQ <- rep(subj, each = K)
             log_Pwk <- rep(log(wk), length(P)) + rep(log(P), each = K)
             log_integrand <- log_Pwk + log_hazard(c(t(st)), id_GQ)
-            c(rowsum(exp(log_integrand), id_GQ, reorder = FALSE)) + log_u[subj]
+            c(rowsum(exp(log_integrand), id_GQ, reorder = FALSE, na.rm = TRUE)) +
+                log_u[subj]
         }
         nr_root <- function (interval, fn, gr, n, tol = 0.001, iter = 100L) {
             subjs <- seq_len(n)

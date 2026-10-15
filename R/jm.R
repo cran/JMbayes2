@@ -25,7 +25,7 @@ jm.default <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     # - knots: numeric vector with the knots for the baseline hazard function
     con <- list(GK_k = 15L, n_chains = 3L, n_burnin = 500L, n_iter = 3500L,
                 n_thin = 1L, seed = 123L, MALA = FALSE,
-                save_random_effects = FALSE, save_logLik_contributions = FALSE,
+                save_random_effects = FALSE, save_logLik_contributions = TRUE,
                 basis = "bs", Bsplines_degree = 2L, base_hazard_segments = 9L,
                 knots = NULL, timescale_base_hazard = "identity", diff = 2L,
                 parallel = "snow",
@@ -459,6 +459,12 @@ jm.default <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
     Funs_FunForms <-
         mapply2(extractFuns_FunForms, Form = functional_forms, nam = respVars_form,
                 MoreArgs = list(data = dataS))
+
+    Funs_FunForms_num <-
+        mapply2(extractFuns_FunForms_numeric, Form = functional_forms, nam = respVars_form,
+                MoreArgs = list(data = dataS))
+
+
     #####################################################
 
     # design matrices for the survival submodel:
@@ -644,6 +650,7 @@ jm.default <- function (Surv_object, Mixed_objects, time_var, recurrent = FALSE,
         FunForms_cpp = lapply(FunForms_per_outcome, unlist),
         FunForms_ind = FunForms_ind(FunForms_per_outcome),
         Funs_FunForms = lapply(Funs_FunForms, function (x) if (!is.list(x)) list(x) else x),
+        Funs_FunForms_num = lapply(Funs_FunForms_num, function (x) if (!is.list(x)) list(x) else x),
         eps = eps, direction = direction, zero_ind_X = zero_ind_X,
         zero_ind_Z = zero_ind_Z, time_window = time_window,
         standardise = standardise, IE_time = IE_time2, #!! new

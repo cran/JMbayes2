@@ -10,16 +10,15 @@
 using namespace Rcpp;
 using namespace arma;
 
-vec logPrior_D_sds(const vec &sigmas, const vec &D_sds_sigmas, const double &D_sds_df,
-                   const vec &D_sds_mean, const double &D_sds_shape,
-                   const bool &gamma_prior = true) {
-  vec out(sigmas.n_rows);
-  if (gamma_prior) {
-    out = log_dgamma(sigmas, D_sds_shape, D_sds_mean / D_sds_shape);
-  } else {
-    out = log_dht(sigmas, D_sds_sigmas, D_sds_df);
-  }
-  return out;
+inline void logPrior_D_sds(const vec &sigmas, const vec &D_sds_sigmas,
+                           const double &D_sds_df, const vec &D_sds_mean,
+                           const double &D_sds_shape,
+                           const bool gamma_prior, vec &out) {
+    if (gamma_prior) {
+        log_dgamma_void(sigmas, D_sds_shape, D_sds_mean / D_sds_shape, out);
+    } else {
+        log_dht_void(sigmas, D_sds_sigmas, D_sds_df, out);
+    }
 }
 
 double logPrior_LKJ (const mat &L, const double &D_L_etaLKJ) {
@@ -74,35 +73,71 @@ double deriv_L (const mat &L, const vec &sds, const mat &b,
 mat propose_L (const mat &L, const vec &scale, const uvec &upper_part,
                const double &deriv, const uword &i, const umat &ind_zero_D,
                const bool &mala = false) {
-  mat proposed_L(size(L), fill::zeros);
-  vec l = L(upper_part);
-  vec proposed_l(l.n_rows, fill::zeros);
-  if (mala) {
-    if (std::isfinite(deriv)) {
-      proposed_l = propose_norm_mala(l, scale, deriv, i);
+    mat proposed_L(size(L), fill::zeros);
+    vec l = L(upper_part);
+    vec proposed_l;
+    if (mala) {
+        if (std::isfinite(deriv)) {
+            proposed_l = propose_norm_mala(l, scale, deriv, i);
+        } else {
+            proposed_L.fill(datum::nan);
+            return proposed_L;
+        }
     } else {
-      return proposed_L.fill(datum::nan);
+        proposed_l = propose_unif(l, scale, i);
     }
-  } else {
-    proposed_l = propose_unif(l, scale, i);
-  }
-  proposed_L(upper_part) = proposed_l;
-  uword n = L.n_rows;
-  for (uword j = 0; j < n; ++j) {
-      vec ll = proposed_L.col(j);
-      proposed_L.at(j, j) = sqrt(1 - dot(ll, ll));
-  }
-  uword nn = ind_zero_D.n_rows;
-  for (uword j = 0; j < nn; ++j) {
-      uword j0 = ind_zero_D.at(j, 0);
-      uword j1 = ind_zero_D.at(j, 1);
-      proposed_L.at(j0, j1) = - sum(proposed_L.col(j0) % proposed_L.col(j1)) / proposed_L.at(j0, j0);
-      vec ll = proposed_L.submat(0, j1, j1 - 1, j1);
-      double ss = dot(ll, ll);
-      if (ss > 1) return proposed_L.fill(datum::nan);
-      proposed_L.at(j1, j1) = sqrt(1 - ss);
-  }
-  return proposed_L;
+    proposed_L(upper_part) = proposed_l;
+    uword n = L.n_rows;
+    for (uword j = 0; j < n; ++j) {
+        auto ll = proposed_L.col(j);
+        proposed_L.at(j, j) = std::sqrt(1.0 - arma::dot(ll, ll));
+    }
+    uword nn = ind_zero_D.n_rows;
+    for (uword j = 0; j < nn; ++j) {
+        uword j0 = ind_zero_D.at(j, 0);
+        uword j1 = ind_zero_D.at(j, 1);
+        auto col_j0 = proposed_L.col(j0);
+        auto col_j1 = proposed_L.col(j1);
+        proposed_L.at(j0, j1) = -arma::dot(col_j0, col_j1) / proposed_L.at(j0, j0);
+        auto ll = proposed_L.col(j1).subvec(0, j1 - 1);
+        double ss = arma::dot(ll, ll);
+        if (ss > 1.0) {
+            proposed_L.fill(datum::nan);
+            return proposed_L;
+        }
+        proposed_L.at(j1, j1) = std::sqrt(1.0 - ss);
+    }
+    return proposed_L;
+}
+
+inline void propose_L_void (const mat &L, const vec &scale,
+                            const uvec &upper_part, const uword i,
+                            const umat &ind_zero_D, mat &proposed_L,
+                            vec &proposed_l) {
+    proposed_L.zeros();
+    proposed_l = L(upper_part);
+    double rr = Const_Unif_Proposal * scale.at(i);
+    proposed_l.at(i) = R::runif(proposed_l.at(i) - rr, proposed_l.at(i) + rr);
+    proposed_L(upper_part) = proposed_l;
+    uword n = L.n_rows;
+    for (uword j = 0; j < n; ++j) {
+        auto ll = proposed_L.col(j);
+        proposed_L.at(j, j) = std::sqrt(1.0 - arma::dot(ll, ll));
+    }
+    uword nn = ind_zero_D.n_rows;
+    for (uword j = 0; j < nn; ++j) {
+        uword j0 = ind_zero_D.at(j, 0);
+        uword j1 = ind_zero_D.at(j, 1);
+        auto col_j0 = proposed_L.col(j0);
+        auto col_j1 = proposed_L.col(j1);
+        proposed_L.at(j0, j1) = -arma::dot(col_j0, col_j1) / proposed_L.at(j0, j0);
+        auto ll = proposed_L.col(j1).subvec(0, j1 - 1);
+        double ss = arma::dot(ll, ll);
+        if (ss > 1.0) {
+            proposed_L.fill(datum::nan);
+        }
+        proposed_L.at(j1, j1) = std::sqrt(1.0 - ss);
+    }
 }
 
 void update_D (mat &L, vec &sds, const mat &b,
@@ -114,30 +149,43 @@ void update_D (mat &L, vec &sds, const mat &b,
                const bool &gamma_prior,
                const double &D_L_etaLKJ,
                const int &it, const bool &MALA, const umat &ind_zero_D,
-               vec &logLik_re,
-               mat &res_sds, mat &res_L,
-               vec &scale_sds, vec &scale_L,
-               mat &acceptance_sds, mat &acceptance_L) {
+               mat &V_R, mat &Z_workspace, mat &Z_transposed,
+               mat &B_scaled_workspace, vec &log_prior_sds, vec &proposed_sds,
+               mat &proposed_L, vec &proposed_l, vec &logLik_re,
+               vec &logLik_re_proposed, mat &res_sds, mat &res_L,
+               vec &scale_sds, vec &scale_L, mat &acceptance_sds,
+               mat &acceptance_L) {
   uword n_sds = sds.n_rows;
   uword n_L = upper_part.n_rows;
-  double denominator_sds = sum(logLik_re) +
-    sum(logPrior_D_sds(sds, D_sds_sigma, D_sds_df, D_sds_mean, D_sds_shape, gamma_prior));
+  inv(V_R, trimatu(L));
+  double log_det_V_R = -arma::sum(arma::log(L.diag()));
+  logPrior_D_sds(sds, D_sds_sigma, D_sds_df, D_sds_mean, D_sds_shape,
+                 gamma_prior, log_prior_sds);
+  double denominator_sds = arma::accu(logLik_re) + arma::accu(log_prior_sds);
   for (uword i = 0; i < n_sds; ++i) {
-    double SS = 0.5 * pow(scale_sds.at(i), 2.0);
-    double log_mu_current = log(sds.at(i)) - SS;
-    vec proposed_sds = propose_lnorm(sds, log_mu_current, scale_sds, i);
-    vec logLik_re_proposed = log_re(b, L, proposed_sds);
-    double numerator_sds = sum(logLik_re_proposed) +
-      sum(logPrior_D_sds(proposed_sds, D_sds_sigma, D_sds_df, D_sds_mean, D_sds_shape, gamma_prior));
-    double log_mu_proposed = log(proposed_sds.at(i)) - SS;
+    double val = scale_sds.at(i);
+    double SS = 0.5 * val * val;
+    double current_sd_i = sds.at(i);
+    double log_mu_current = std::log(current_sd_i) - SS;
+    double proposed_sd_i = R::rlnorm(log_mu_current, scale_sds.at(i));
+    sds.at(i) = proposed_sd_i;
+    log_re_onlySDS(b, V_R, log_det_V_R, sds, B_scaled_workspace,
+                   Z_workspace, logLik_re_proposed);
+    logPrior_D_sds(sds, D_sds_sigma, D_sds_df, D_sds_mean,
+                   D_sds_shape, gamma_prior, log_prior_sds);
+    double numerator_sds = arma::accu(logLik_re_proposed) +
+        arma::accu(log_prior_sds);
+    double log_mu_proposed = std::log(proposed_sd_i) - SS;
     double log_ratio_sds = numerator_sds - denominator_sds +
-      R::dlnorm(sds.at(i), log_mu_proposed, scale_sds.at(i), true) -
-      R::dlnorm(proposed_sds.at(i), log_mu_current, scale_sds.at(i), true);
-    if (std::isfinite(log_ratio_sds) && exp(log_ratio_sds) > R::runif(0.0, 1.0)) {
-      sds = proposed_sds;
+        log_dlnorm(current_sd_i, log_mu_proposed, scale_sds.at(i)) -
+        log_dlnorm(proposed_sd_i, log_mu_current, scale_sds.at(i));
+    if (std::isfinite(log_ratio_sds) &&
+        log_ratio_sds > std::log(R::unif_rand())) {
       logLik_re = logLik_re_proposed;
       denominator_sds = numerator_sds;
       acceptance_sds.at(it, i) = 1;
+    } else {
+        sds.at(i) = current_sd_i;
     }
     if (it > 119) {
       scale_sds.at(i) =
@@ -146,27 +194,41 @@ void update_D (mat &L, vec &sds, const mat &b,
     res_sds.at(it, i) = sds.at(i);
   }
   double denominator_L = sum(logLik_re) + logPrior_LKJ(L, D_L_etaLKJ);
+  uword n_rows_b = b.n_rows;
+  const double* sds_ptr = sds.memptr();
+  for (uword c = 0; c < n_sds; ++c) {
+      double inv_sd = 1.0 / sds_ptr[c];
+      const double* b_col = b.colptr(c);
+      double* B_ws_col = B_scaled_workspace.colptr(c);
+      for (uword r = 0; r < n_rows_b; ++r) {
+          B_ws_col[r] = b_col[r] * inv_sd;
+      }
+  }
+  double sum_log_sds = arma::accu(arma::log(sds));
   for (uword i = 0; i < n_L; ++i) {
     uword upper_part_i = upper_part.at(i);
     double deriv_current(0.0);
     double mu_current(0.0);
-    mat proposed_L = L;
+    proposed_L = L;
     if (MALA) {
       deriv_current = deriv_L(L, sds, b, denominator_L, i, upper_part,
                               D_L_etaLKJ);
       mu_current = L.at(upper_part_i) + 0.5 * scale_L.at(i) * deriv_current;
-      proposed_L = propose_L(L, scale_L, upper_part, deriv_current, i, ind_zero_D, true);
+      proposed_L = propose_L(L, scale_L, upper_part, deriv_current, i,
+                             ind_zero_D, true);
     } else {
-      proposed_L = propose_L(L, scale_L, upper_part, deriv_current, i, ind_zero_D);
+      propose_L_void(L, scale_L, upper_part, i, ind_zero_D, proposed_L,
+                     proposed_l);
     }
-    vec logLik_re_proposed = logLik_re;
+    logLik_re_proposed = logLik_re;
     double numerator_L(0.0);
     double deriv_proposed(0.0);
     double mu_proposed(0.0);
     double log_ratio_L(0.0);
     bool finite_L = proposed_L.is_finite();
     if (finite_L) {
-      logLik_re_proposed = log_re(b, proposed_L, sds);
+      log_re_onlyL(B_scaled_workspace, proposed_L, sum_log_sds, Z_transposed,
+                   logLik_re_proposed);
       numerator_L = sum(logLik_re_proposed) +
         logPrior_LKJ(proposed_L, D_L_etaLKJ);
       if (MALA) {
@@ -182,7 +244,7 @@ void update_D (mat &L, vec &sds, const mat &b,
       }
     }
     if (finite_L && std::isfinite(log_ratio_L) &&
-        exp(log_ratio_L) > R::runif(0.0, 1.0)) {
+        log_ratio_L > std::log(R::unif_rand())) {
       L = proposed_L;
       logLik_re = logLik_re_proposed;
       denominator_L = numerator_L;
@@ -195,6 +257,5 @@ void update_D (mat &L, vec &sds, const mat &b,
     res_L.at(it, i) = L.at(upper_part_i);
   }
 }
-
 
 #endif
